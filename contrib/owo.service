@@ -1,0 +1,25 @@
+[Unit]
+Description=Open Workstation Observer (OWO) - eBPF endpoint monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/owo/owo-agent -config /etc/owo/config.yaml
+WorkingDirectory=/opt/owo
+Restart=on-failure
+RestartSec=5
+
+# eBPF requires root
+User=root
+Group=root
+
+# Optional hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/edr /opt/owo
+ReadOnlyPaths=/etc/owo
+
+[Install]
+WantedBy=multi-user.target

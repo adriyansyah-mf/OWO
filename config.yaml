@@ -1,0 +1,29 @@
+# Open Workstation Observer (OWO). Path: -config config.yaml or default.
+
+agent:
+  name: ""        # default: hostname
+  hostname: ""    # default: os.Hostname()
+  group: ""       # optional, e.g. "servers"
+
+monitor:
+  execve: true         # process execution (eBPF)
+  ebpf_path: ""        # default: auto (bpf/execve.o)
+  file_events: true    # openat, unlink, rename
+  file_watch_all_paths: true  # true = all paths (noisier); false = only /etc,/usr/bin,/bin,/tmp,/dev/shm
+  network_events: true # connect, sendto (correlation: reverse shell etc.)
+
+output:
+  file:
+    enabled: true   # write events to path; /var/log/edr is created at startup
+    path: "/var/log/edr/alerts.jsonl"
+  stderr: true    # print alerts to stderr
+  remote:
+    enabled: false
+    address: ""   # manager host:port, e.g. "192.168.1.10:1514"
+    protocol: tcp # tcp | tls | http | https
+    http_endpoint: "/alerts"
+    max_retries: 5
+    retry_interval: 10
+
+logging:
+  level: info

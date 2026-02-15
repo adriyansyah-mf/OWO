@@ -1,0 +1,19 @@
+title: Suspicious Curl or Wget to Untrusted
+id: proc-lnx-curl-wget-suspicious
+status: experimental
+description: Curl/wget with pipe to shell or download to /tmp
+author: EDR-Linux
+date: 2026/02/15
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_pipe:
+    CommandLine|re: 'curl.*\\|\\s*(bash|sh)\s'
+  selection_tmp:
+    CommandLine|contains: ' -o /tmp/'
+    Image|re: 'curl$|wget$'
+  condition: 1 of selection*
+level: medium
+tags:
+  - attack.execution

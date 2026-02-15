@@ -1,0 +1,12 @@
+# Rotate OWO JSONL event log. Install: sudo cp contrib/owo.logrotate /etc/logrotate.d/owo
+# Uses copytruncate so the agent does not need to be restarted.
+
+/var/log/edr/alerts.jsonl {
+    daily
+    rotate 7
+    copytruncate
+    missingok
+    notifempty
+    compress
+    delaycompress
+}

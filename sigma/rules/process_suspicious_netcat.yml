@@ -1,0 +1,20 @@
+title: Suspicious Netcat or Reverse Shell
+id: proc-lnx-netcat-revshell
+status: experimental
+description: Detects use of netcat or ncat with reverse shell options
+author: EDR-Linux
+date: 2026/02/15
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    CommandLine|contains: ' -e '
+    Image|endswith: '/nc'
+  selection_ncat:
+    CommandLine|contains: ' -e '
+    Image|endswith: 'ncat'
+  condition: 1 of selection*
+level: high
+tags:
+  - attack.execution
