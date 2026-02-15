@@ -2,6 +2,8 @@
 
 ![OWO](assets/owo.png)
 
+![workspace](assets/workspace.png)
+
 > **Lightweight, eBPF-powered endpoint visibility for Linux. Exec, file, and network events as JSON—your SIEM does the rest.**
 
 **Open Workstation Observer** (OWO) is an eBPF-based endpoint monitoring agent for Linux. It observes process execution (execve), file operations (openat/unlink/rename), and network activity (connect/sendto), with SHA256/inode/TTY/container enrichment. Output is JSON lines for your SIEM (e.g. Wazuh); rule matching and alerting are done on the SIEM side.
