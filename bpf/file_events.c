@@ -7,9 +7,10 @@
 #define TASK_COMM_LEN 16
 #define MAX_PATH_LEN  256
 
-#define FILE_OPENAT  1
-#define FILE_UNLINK  2
-#define FILE_RENAME  3
+#define FILE_OPENAT        1
+#define FILE_UNLINK        2
+#define FILE_RENAME        3
+#define FILE_LIBRARY_LOAD  4  /* open of .so */
 
 struct file_event_t {
 	__u8  type;
@@ -64,9 +65,19 @@ int trace_openat(struct pt_regs *ctx)
 	if (!path_watched(buf))
 		return 0;
 
+	/* Detect .so open as library load */
+	__u32 len = 0;
+	for (; len < MAX_PATH_LEN && buf[len] != '\0'; len++)
+		;
+	__u8 is_so = 0;
+	if (len >= 3 && buf[len-3] == '.' && buf[len-2] == 's' && buf[len-1] == 'o')
+		is_so = 1;
+	else if (len >= 4 && buf[len-4] == '.' && buf[len-3] == 's' && buf[len-2] == 'o')
+		is_so = 1; /* .soX */
+
 	struct file_event_t *e = bpf_ringbuf_reserve(&file_events, sizeof(*e), 0);
 	if (!e) return 0;
-	e->type = FILE_OPENAT;
+	e->type = is_so ? FILE_LIBRARY_LOAD : FILE_OPENAT;
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;

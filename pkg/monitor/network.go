@@ -18,20 +18,22 @@ const (
 	networkEventsMap = "network_events"
 	netEventConnect  = 1
 	netEventSendto   = 2
+	netEventAccept   = 3
 	afINET           = 2
 	afINET6          = 10
 )
 
-// NetworkEvent is one connect or sendto event.
+// NetworkEvent is one connect, sendto, or accept (inbound) event.
 type NetworkEvent struct {
-	Type     string // "connect", "sendto"
+	Type     string // "connect", "sendto", "accept"
 	Pid      uint32
 	Tid      uint32
 	Uid      uint32
 	Family   string // "inet", "inet6"
-	DAddr    string // "ip:port"
+	DAddr    string // "ip:port" (peer for accept)
 	DPort    uint16
 	Comm     string
+	IsDNS    bool   // true when port 53
 }
 
 // NetworkMonitor loads network_events.o and attaches connect/sendto kprobes.
@@ -57,19 +59,28 @@ func NewNetworkMonitor(objPath string) (*NetworkMonitor, error) {
 		return nil, fmt.Errorf("map %s not found", networkEventsMap)
 	}
 	var links []link.Link
-	for name, prog := range coll.Programs {
-		if prog == nil {
+	for name, progSpec := range spec.Programs {
+		prog := coll.Programs[name]
+		if prog == nil || progSpec == nil {
 			continue
 		}
-		kp, err := link.Kprobe(name, prog, nil)
+		sec := progSpec.SectionName
+		sym := strings.TrimPrefix(sec, "kretprobe/")
+		sym = strings.TrimPrefix(sym, "kprobe/")
+		var l link.Link
+		if strings.HasPrefix(sec, "kretprobe/") {
+			l, err = link.Kretprobe(sym, prog, nil)
+		} else {
+			l, err = link.Kprobe(sym, prog, nil)
+		}
 		if err != nil {
-			for _, l := range links {
-				l.Close()
+			for _, lnk := range links {
+				lnk.Close()
 			}
 			coll.Close()
-			return nil, fmt.Errorf("attach %s: %w", name, err)
+			return nil, fmt.Errorf("attach %s: %w", sec, err)
 		}
-		links = append(links, kp)
+		links = append(links, l)
 	}
 	rd, err := ringbuf.NewReader(m)
 	if err != nil {
@@ -118,11 +129,17 @@ func (n *NetworkMonitor) ReadNetworkEvent() (NetworkEvent, error) {
 	ev.Tid = binary.LittleEndian.Uint32(raw[8:12])
 	ev.Uid = binary.LittleEndian.Uint32(raw[12:16])
 	ev.Comm = strings.TrimRight(string(raw[40:56]), "\x00")
-	if typ == netEventConnect {
+	switch typ {
+	case netEventConnect:
 		ev.Type = "connect"
-	} else {
+	case netEventSendto:
 		ev.Type = "sendto"
+	case netEventAccept:
+		ev.Type = "accept"
+	default:
+		ev.Type = "unknown"
 	}
+	ev.IsDNS = ev.DPort == 53
 	if family == afINET {
 		ev.Family = "inet"
 		ev.DAddr = net.IP(raw[20:24]).To4().String() + ":" + fmt.Sprintf("%d", ev.DPort)

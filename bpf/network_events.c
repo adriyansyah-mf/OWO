@@ -9,7 +9,7 @@
 #define AF_INET6 10
 
 struct network_event_t {
-	__u8  type;   /* 1=connect, 2=sendto */
+	__u8  type;   /* 1=connect, 2=sendto, 3=accept (inbound) */
 	__u8  family; /* AF_INET or AF_INET6 */
 	__u16 dport;  /* big-endian in kernel, we store host order in userspace */
 	__u32 pid;
@@ -92,6 +92,27 @@ int trace_sendto(struct pt_regs *ctx)
 	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
 	if (!e) return 0;
 	e->type = 2; /* sendto */
+	e->pid = bpf_get_current_pid_tgid() >> 32;
+	e->tid = (__u32)bpf_get_current_pid_tgid();
+	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	if (!read_sockaddr(addr, e)) {
+		bpf_ringbuf_discard(e, 0);
+		return 0;
+	}
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
+/* accept4: after return, arg2 (addr) is filled with peer (client) address - use kretprobe */
+SEC("kretprobe/__x64_sys_accept4")
+int trace_accept4_ret(struct pt_regs *ctx)
+{
+	/* Parm2 is the sockaddr *addr (output); kernel fills it on success */
+	void *addr = (void *)PT_REGS_PARM2(ctx);
+	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
+	if (!e) return 0;
+	e->type = 3; /* accept */
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;

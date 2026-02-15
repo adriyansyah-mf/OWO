@@ -10,7 +10,11 @@ monitor:
   ebpf_path: ""        # default: auto (bpf/execve.o)
   file_events: true    # openat, unlink, rename
   file_watch_all_paths: true  # true = all paths (noisier); false = only /etc,/usr/bin,/bin,/tmp,/dev/shm
-  network_events: true # connect, sendto (correlation: reverse shell etc.)
+  network_events: true   # connect, sendto, accept (inbound); DNS = port 53
+  privilege_events: true # setuid, setgid, setreuid, setregid
+  exit_events: true      # process exit (exit_group)
+  write_events: false    # write syscall (noisy; path from /proc/pid/fd)
+  module_events: true    # kernel module load (init_module, finit_module)
 
 output:
   file:

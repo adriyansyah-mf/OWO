@@ -35,8 +35,16 @@ type MonitorConfig struct {
 	FileEvents *bool `yaml:"file_events"`
 	// FileWatchAllPaths if true, monitor all absolute paths; if false, only /etc,/usr/bin,/bin,/tmp,/dev/shm. Default false (noisier if true).
 	FileWatchAllPaths *bool `yaml:"file_watch_all_paths"`
-	// NetworkEvents enables connect/sendto for correlation. Default true.
+	// NetworkEvents enables connect/sendto/accept for correlation. Default true.
 	NetworkEvents *bool `yaml:"network_events"`
+	// PrivilegeEvents enables setuid/setgid/setreuid/setregid. Default true.
+	PrivilegeEvents *bool `yaml:"privilege_events"`
+	// ExitEvents enables process exit (exit_group). Default true.
+	ExitEvents *bool `yaml:"exit_events"`
+	// WriteEvents enables write syscall (noisy; path from /proc/pid/fd). Default false.
+	WriteEvents *bool `yaml:"write_events"`
+	// ModuleEvents enables kernel module load (init_module/finit_module). Default true.
+	ModuleEvents *bool `yaml:"module_events"`
 }
 
 type OutputConfig struct {
@@ -100,8 +108,12 @@ func Default() *Config {
 			Execve:            &trueVal,
 			EbpfPath:          "",
 			FileEvents:        &trueVal,
-			FileWatchAllPaths: nil, // false = only watched paths
+			FileWatchAllPaths: nil,
 			NetworkEvents:     &trueVal,
+			PrivilegeEvents:   &trueVal,
+			ExitEvents:        &trueVal,
+			WriteEvents:       nil, // false = noisy
+			ModuleEvents:      &trueVal,
 		},
 		Output: OutputConfig{
 			File: FileOutputConfig{
@@ -149,6 +161,26 @@ func (c *Config) MonitorNetworkEventsEnabled() bool {
 // FileWatchAllPaths returns whether to monitor file ops on all paths (true) or only watched paths (false).
 func (c *Config) FileWatchAllPaths() bool {
 	return c.Monitor.FileWatchAllPaths != nil && *c.Monitor.FileWatchAllPaths
+}
+
+// MonitorPrivilegeEventsEnabled returns whether privilege change monitoring is on.
+func (c *Config) MonitorPrivilegeEventsEnabled() bool {
+	return c.Monitor.PrivilegeEvents == nil || *c.Monitor.PrivilegeEvents
+}
+
+// MonitorExitEventsEnabled returns whether process exit monitoring is on.
+func (c *Config) MonitorExitEventsEnabled() bool {
+	return c.Monitor.ExitEvents == nil || *c.Monitor.ExitEvents
+}
+
+// MonitorWriteEventsEnabled returns whether write syscall monitoring is on.
+func (c *Config) MonitorWriteEventsEnabled() bool {
+	return c.Monitor.WriteEvents != nil && *c.Monitor.WriteEvents
+}
+
+// MonitorModuleEventsEnabled returns whether kernel module load monitoring is on.
+func (c *Config) MonitorModuleEventsEnabled() bool {
+	return c.Monitor.ModuleEvents == nil || *c.Monitor.ModuleEvents
 }
 
 // OutputStderrEnabled returns whether to log alerts to stderr.

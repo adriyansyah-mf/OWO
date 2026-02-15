@@ -182,10 +182,14 @@ agent:
 
 monitor:
   execve: true
-  ebpf_path: ""   # empty = look for bpf/ next to binary
+  ebpf_path: ""
   file_events: true
-  file_watch_all_paths: false   # false = only /etc,/usr/bin,/bin,/tmp,/dev/shm
+  file_watch_all_paths: false
   network_events: true
+  privilege_events: true
+  exit_events: true
+  write_events: false   # noisy
+  module_events: true
 
 output:
   file:
@@ -232,8 +236,8 @@ kill -USR1 $(pgrep -f owo-agent)
 
 ## Output & telemetry
 
-- Each execve event is written as **one JSON line** (JSONL) to file/stderr/remote.
-- Format: `agent_name`, `agent_hostname`, `agent_group`, `timestamp`, `event`. The `event` object contains: `pid`, `ppid`, `tid`, `uid`, `gid`, `comm`, `path`, `exe`, `cmdline`, `parent_path`, `parent_cmdline`, `sha256`, `inode`, `is_tty`, `container_id`, `load_time_ns`, `signed`.
+- All event types are written as **one JSON line** (JSONL) to file/stderr/remote. Each event has `event_type`: `execve`, `file`, `network`, `privilege`, `exit`, `write`, `module`.
+- Wrapper format: `agent_name`, `agent_hostname`, `agent_group`, `timestamp`, `event`. The `event` object includes `event_type` and type-specific fields (e.g. execve: `sha256`, `cmdline`; network: `is_dns` when port 53).
 - The agent does not assign verdict or score; classification and rule matching are done in the SIEM (e.g. Wazuh).
 
 Enrichment:
@@ -242,12 +246,20 @@ Enrichment:
 
 ---
 
-## File & network monitoring
+## Monitoring scope
 
-- **File (eBPF):** openat, unlink, rename. Default paths: `/etc`, `/usr/bin`, `/bin`, `/tmp`, `/dev/shm`. With `file_watch_all_paths: true`, all absolute paths are monitored (noisier).
-- **Network (eBPF):** connect, sendto (TCP/UDP). Used for correlation (e.g. reverse shell).
+| Scope | eBPF hook | Config | Description |
+|-------|-----------|--------|-------------|
+| **Exec** | execve | `monitor.execve` | Process execution (default on). |
+| **File** | openat, unlink, rename | `monitor.file_events` | Path filter or all paths (`file_watch_all_paths`). |
+| **Library load** | openat (path ends with .so) | same as file | Open of shared libraries (reported as type `library_load`). |
+| **Network** | connect, sendto, accept4 | `monitor.network_events` | Outbound connect/sendto; **inbound accept**. Port 53 → `is_dns: true`. |
+| **Privilege** | setuid, setgid, setreuid, setregid | `monitor.privilege_events` | Privilege changes (default on). |
+| **Exit** | exit_group | `monitor.exit_events` | Process exit with exit code (default on). |
+| **Write** | write | `monitor.write_events` | Write syscall; path resolved from `/proc/pid/fd` (noisy; default off). |
+| **Kernel module** | init_module, finit_module | `monitor.module_events` | Kernel module load (default on). |
 
-File/network events are logged to the application log (e.g. `[FILE]` / `[NET]`); forwarding them into the JSONL event stream can be added separately.
+All events are logged (`[FILE]`, `[NET]`, `[PRIVILEGE]`, `[EXIT]`, `[WRITE]`, `[MODULE]`) and written to JSONL when file/remote output is enabled.
 
 ---
 

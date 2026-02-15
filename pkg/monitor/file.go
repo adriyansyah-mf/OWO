@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	fileEventsMap   = "file_events"
-	fileConfigMap   = "file_config"
-	fileEventOpen   = 1
-	fileEventUnlink = 2
-	fileEventRename = 3
+	fileEventsMap        = "file_events"
+	fileConfigMap        = "file_config"
+	fileEventOpen        = 1
+	fileEventUnlink      = 2
+	fileEventRename      = 3
+	fileEventLibraryLoad = 4
 )
 
 // FileEvent is one file operation event.
@@ -61,17 +62,19 @@ func NewFileMonitor(objPath string, watchAllPaths bool) (*FileMonitor, error) {
 		}
 	}
 	var links []link.Link
-	for name, prog := range coll.Programs {
-		if prog == nil {
+	for name, progSpec := range spec.Programs {
+		prog := coll.Programs[name]
+		if prog == nil || progSpec == nil {
 			continue
 		}
-		kp, err := link.Kprobe(name, prog, nil)
+		sym := strings.TrimPrefix(progSpec.SectionName, "kprobe/")
+		kp, err := link.Kprobe(sym, prog, nil)
 		if err != nil {
 			for _, l := range links {
 				l.Close()
 			}
 			coll.Close()
-			return nil, fmt.Errorf("attach %s: %w", name, err)
+			return nil, fmt.Errorf("attach %s: %w", progSpec.SectionName, err)
 		}
 		links = append(links, kp)
 	}
@@ -130,6 +133,8 @@ func (f *FileMonitor) ReadFileEvent() (FileEvent, error) {
 		ev.Type = "unlink"
 	case fileEventRename:
 		ev.Type = "rename"
+	case fileEventLibraryLoad:
+		ev.Type = "library_load"
 	default:
 		ev.Type = "unknown"
 	}

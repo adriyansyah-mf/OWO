@@ -138,20 +138,62 @@ func main() {
 			netMon = nil
 		} else {
 			defer netMon.Close()
-			log.Printf("Network events: connect, sendto (for correlation)")
+			log.Printf("Network events: connect, sendto, accept (DNS=port 53)")
+		}
+	}
+	var privMon *monitor.PrivilegeMonitor
+	if cfg.MonitorPrivilegeEventsEnabled() {
+		privMon, err = monitor.NewPrivilegeMonitorFromEmbed()
+		if err != nil {
+			log.Printf("privilege_events: %v (disabled)", err)
+			privMon = nil
+		} else {
+			defer privMon.Close()
+			log.Printf("Privilege events: setuid/setgid/setreuid/setregid")
+		}
+	}
+	var exitMon *monitor.ExitMonitor
+	if cfg.MonitorExitEventsEnabled() {
+		exitMon, err = monitor.NewExitMonitorFromEmbed()
+		if err != nil {
+			log.Printf("exit_events: %v (disabled)", err)
+			exitMon = nil
+		} else {
+			defer exitMon.Close()
+			log.Printf("Exit events: exit_group")
+		}
+	}
+	var writeMon *monitor.WriteMonitor
+	if cfg.MonitorWriteEventsEnabled() {
+		writeMon, err = monitor.NewWriteMonitorFromEmbed()
+		if err != nil {
+			log.Printf("write_events: %v (disabled)", err)
+			writeMon = nil
+		} else {
+			defer writeMon.Close()
+			log.Printf("Write events: write (path from /proc/pid/fd)")
+		}
+	}
+	var modMon *monitor.ModuleMonitor
+	if cfg.MonitorModuleEventsEnabled() {
+		modMon, err = monitor.NewModuleMonitorFromEmbed()
+		if err != nil {
+			log.Printf("module_events: %v (disabled)", err)
+			modMon = nil
+		} else {
+			defer modMon.Close()
+			log.Printf("Module events: init_module, finit_module")
 		}
 	}
 
 	beh := behavior.NewEngine()
 
-	fmt.Printf("EDR agent [%s] – exec + file + network + behavior. Ctrl+C to stop.\n", cfg.Agent.Name)
+	fmt.Printf("OWO [%s] – exec, file, network, privilege, exit, write, module. Ctrl+C to stop.\n", cfg.Agent.Name)
 	fmt.Println("Send SIGUSR1 to print full process tree.")
 	if exporter != nil {
 		fmt.Printf("Output: file=%v stderr=%v remote=%v\n",
 			opts.FilePath != "", opts.Stderr, opts.Remote != nil)
 	}
-	fmt.Println("Columns: [tree] ts | pid | ppid | sha256 | inode | tty | container | path | cmdline")
-	fmt.Println(strings.Repeat("-", 140))
 
 	tree := make(map[uint32]*procNode)
 	done := make(chan os.Signal, 1)
@@ -172,7 +214,15 @@ func main() {
 						log.Printf("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				fmt.Printf("  [FILE] %s pid=%d uid=%d %s %s → %s\n", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
+				log.Printf("[FILE] %s pid=%d uid=%d %s %s → %s", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "file", "timestamp": time.Now().UTC(),
+						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid,
+						"comm": ev.Comm, "path": ev.Path, "path2": ev.Path2,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
 			}
 		}()
 	}
@@ -189,7 +239,88 @@ func main() {
 						log.Printf("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				fmt.Printf("  [NET] %s pid=%d uid=%d %s → %s\n", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr)
+				log.Printf("[NET] %s pid=%d uid=%d %s → %s is_dns=%v", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr, ev.IsDNS)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "network", "timestamp": time.Now().UTC(),
+						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid,
+						"comm": ev.Comm, "daddr": ev.DAddr, "dport": ev.DPort, "is_dns": ev.IsDNS,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
+			}
+		}()
+	}
+	if privMon != nil {
+		go func() {
+			for {
+				ev, err := privMon.ReadPrivilegeEvent()
+				if err != nil {
+					continue
+				}
+				log.Printf("[PRIVILEGE] %s pid=%d uid=%d→%d gid=%d→%d %s", ev.Type, ev.Pid, ev.Uid, ev.NewUid, ev.Gid, ev.NewGid, ev.Comm)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "privilege", "timestamp": time.Now().UTC(),
+						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "gid": ev.Gid,
+						"new_uid": ev.NewUid, "new_gid": ev.NewGid, "comm": ev.Comm,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
+			}
+		}()
+	}
+	if exitMon != nil {
+		go func() {
+			for {
+				ev, err := exitMon.ReadExitEvent()
+				if err != nil {
+					continue
+				}
+				log.Printf("[EXIT] pid=%d uid=%d exit_code=%d %s", ev.Pid, ev.Uid, ev.ExitCode, ev.Comm)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "exit", "timestamp": time.Now().UTC(),
+						"pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "exit_code": ev.ExitCode, "comm": ev.Comm,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
+			}
+		}()
+	}
+	if writeMon != nil {
+		go func() {
+			for {
+				ev, err := writeMon.ReadWriteEvent()
+				if err != nil {
+					continue
+				}
+				log.Printf("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "write", "timestamp": time.Now().UTC(),
+						"pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "fd": ev.Fd, "count": ev.Count, "path": ev.Path, "comm": ev.Comm,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
+			}
+		}()
+	}
+	if modMon != nil {
+		go func() {
+			for {
+				ev, err := modMon.ReadModuleEvent()
+				if err != nil {
+					continue
+				}
+				log.Printf("[MODULE] %s pid=%d uid=%d %s", ev.Type, ev.Pid, ev.Uid, ev.Comm)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "module", "timestamp": time.Now().UTC(),
+						"type": ev.Type, "pid": ev.Pid, "uid": ev.Uid, "comm": ev.Comm,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
 			}
 		}()
 	}
@@ -257,7 +388,7 @@ func main() {
 
 			if exporter != nil {
 				eventJSON, _ := json.Marshal(map[string]interface{}{
-					"timestamp": ts, "pid": ev.Pid, "ppid": ppid, "tid": ev.Tid,
+					"event_type": "execve", "timestamp": ts, "pid": ev.Pid, "ppid": ppid, "tid": ev.Tid,
 					"uid": ev.Uid, "gid": ev.Gid, "comm": comm, "path": path,
 					"exe": exe, "cmdline": cmdline,
 					"parent_path": parentPath, "parent_cmdline": parentCmdline,
