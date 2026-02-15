@@ -1,3 +1,7 @@
 /bin/
 bpf/*.o
 *.o
+*.test
+coverage.out
+.vscode/
+.idea/

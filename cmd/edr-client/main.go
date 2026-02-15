@@ -29,7 +29,11 @@ const (
 
 var (
 	configPath = flag.String("config", "", "Path to config YAML. Empty = defaults (Wazuh-style flexible).")
+	showVersion = flag.Bool("version", false, "Print version and exit.")
 )
+
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "0.1.0"
 
 type procNode struct {
 	Pid     uint32
@@ -46,6 +50,10 @@ type procNode struct {
 
 func main() {
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("OWO (Open Workstation Observer)", version)
+		os.Exit(0)
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

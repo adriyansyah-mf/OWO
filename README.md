@@ -2,8 +2,6 @@
 
 ![OWO](assets/owo.png)
 
-![workspace](assets/workspace.png)
-
 > **Lightweight, eBPF-powered endpoint visibility for Linux. Exec, file, and network events as JSON—your SIEM does the rest.**
 
 **Current version:** [v0.1.0](https://github.com/adriyansyah-mf/OWO/releases) · [Releases](https://github.com/adriyansyah-mf/OWO/releases)
@@ -57,11 +55,9 @@ Clone or extract the repo on the target machine:
 
 ```bash
 cd /opt
-sudo git clone https://github.com/your-org/edr-linux.git owo
+sudo git clone https://github.com/adriyansyah-mf/OWO.git owo
 cd owo
 ```
-
-*(Replace the URL with your repo; or copy the project folder to `/opt/owo`.)*
 
 ### 2. Build
 
@@ -72,7 +68,7 @@ make all
 
 This produces:
 - `bpf/execve.o`, `bpf/file_events.o`, `bpf/network_events.o`
-- `bin/edr-client` (main binary)
+- `bin/edr-client` (main binary; version is set from `VERSION` at build time)
 
 ### 3. Install to system (optional)
 
@@ -200,11 +196,16 @@ output:
     enabled: false
     address: "192.168.1.10:1514"
     protocol: tcp
+
+logging:
+  level: info
 ```
 
 ---
 
 ## Running
+
+**Flags:** `-config <path>` — config YAML (default: none). `-version` — print version and exit.
 
 **Manual (for testing):**
 
@@ -259,22 +260,28 @@ Correlates exec, file, and network events over a time window (~15s). Example rul
 ## Project structure
 
 ```
-edr-linux/
+OWO/
 ├── config.yaml
 ├── Makefile
-├── bpf/                 # eBPF source + objects
+├── VERSION               # Current version (used at build)
+├── LICENSE               # GPL-2.0
+├── CHANGELOG.md          # Release history
+├── SECURITY.md           # Vulnerability reporting
+├── assets/
+│   └── owo.png          # Logo
+├── bpf/                  # eBPF source + object files
 ├── contrib/
 │   ├── owo.service      # systemd unit
 │   └── owo.logrotate    # logrotate for alerts.jsonl
-├── cmd/edr-client/      # Main binary
+├── cmd/edr-client/       # Main binary source
 ├── pkg/
-│   ├── config/          # Load config YAML
+│   ├── config/          # Config YAML loading
 │   ├── monitor/         # eBPF load, ringbuf, file/network
 │   ├── proc/            # /proc enrichment
 │   ├── enrich/          # SHA256, inode, TTY, container
 │   ├── behavior/        # Exec+file+network correlation
 │   └── edr/             # Export file/stderr/remote
-├── scripts/
+├── scripts/              # Test scripts
 └── README.md
 ```
 
@@ -338,4 +345,4 @@ sudo rm -rf /opt/owo /etc/owo
 
 ## License
 
-GPL-2.0 (consistent with the eBPF programs using GPL).
+GPL-2.0. See [LICENSE](LICENSE). The eBPF programs use GPL-licensed helpers.

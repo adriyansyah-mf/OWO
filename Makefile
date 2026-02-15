@@ -43,8 +43,10 @@ bpf/file_events.o: bpf/file_events.c
 bpf/network_events.o: bpf/network_events.c
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
+VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0")
+
 go:
-	go build -o bin/edr-client ./cmd/edr-client
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/edr-client ./cmd/edr-client
 
 run: all
 	sudo ./bin/edr-client
