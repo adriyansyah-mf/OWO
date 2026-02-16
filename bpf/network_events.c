@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* EDR eBPF: network correlation - tcp connect, udp sendto */
+/* EDR eBPF: network - connect, sendto, accept. Use tracepoint (stable) + kprobe fallback. */
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -9,15 +9,15 @@
 #define AF_INET6 10
 
 struct network_event_t {
-	__u8  type;   /* 1=connect, 2=sendto, 3=accept (inbound) */
-	__u8  family; /* AF_INET or AF_INET6 */
-	__u16 dport;  /* big-endian in kernel, we store host order in userspace */
+	__u8  type;
+	__u8  family;
+	__u16 dport;
 	__u32 pid;
 	__u32 tid;
 	__u32 uid;
-	__u32 saddr_v4;     /* optional, 0 if not filled */
-	__u32 daddr_v4;     /* IPv4 */
-	__u8  daddr_v6[16]; /* IPv6 */
+	__u32 saddr_v4;
+	__u32 daddr_v4;
+	__u8  daddr_v6[16];
 	char  comm[TASK_COMM_LEN];
 };
 
@@ -25,6 +25,13 @@ struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
 	__uint(max_entries, 64 * 4096);
 } network_events SEC(".maps");
+
+/* Tracepoint context: sys_enter_* has common (16) + id (8) + args[6] (48) */
+struct sys_enter_ctx {
+	__u64 _pad[2];   /* common_type, common_flags, common_preempt_count, common_pid */
+	long id;
+	unsigned long args[6];
+};
 
 static __always_inline void* arg1(struct pt_regs *ctx) { return (void *)PT_REGS_PARM1(ctx); }
 static __always_inline void* arg2(struct pt_regs *ctx) { return (void *)PT_REGS_PARM2(ctx); }
@@ -66,61 +73,90 @@ static __always_inline int read_sockaddr(void *addr_ptr, struct network_event_t 
 	return 0;
 }
 
-SEC("kprobe/__x64_sys_connect")
-int trace_connect(struct pt_regs *ctx)
+/* Tracepoint: stabil di semua kernel, tidak tergantung simbol __x64_sys_* */
+SEC("tracepoint/syscalls/sys_enter_connect")
+int trace_connect_tp(struct sys_enter_ctx *ctx)
 {
-	void *addr = (void *)arg2(ctx);
+	void *addr = (void *)ctx->args[1];
 	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
 	if (!e) return 0;
-	e->type = 1; /* connect */
+	e->type = 1;
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	if (!read_sockaddr(addr, e)) {
-		bpf_ringbuf_discard(e, 0);
-		return 0;
-	}
+	e->family = 0;
+	e->dport = 0;
+	e->daddr_v4 = 0;
+	__builtin_memset(e->daddr_v6, 0, 16);
+	if (addr)
+		read_sockaddr(addr, e);
 	bpf_ringbuf_submit(e, 0);
 	return 0;
 }
 
-SEC("kprobe/__x64_sys_sendto")
-int trace_sendto(struct pt_regs *ctx)
+SEC("tracepoint/syscalls/sys_enter_sendto")
+int trace_sendto_tp(struct sys_enter_ctx *ctx)
 {
-	void *addr = (void *)arg5(ctx);
+	void *addr = (void *)ctx->args[4];
 	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
 	if (!e) return 0;
-	e->type = 2; /* sendto */
+	e->type = 2;
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	if (!read_sockaddr(addr, e)) {
-		bpf_ringbuf_discard(e, 0);
-		return 0;
-	}
+	e->family = 0;
+	e->dport = 0;
+	e->daddr_v4 = 0;
+	__builtin_memset(e->daddr_v6, 0, 16);
+	if (addr)
+		read_sockaddr(addr, e);
 	bpf_ringbuf_submit(e, 0);
 	return 0;
 }
 
-/* accept4: after return, arg2 (addr) is filled with peer (client) address - use kretprobe */
+/* ping and other raw-socket traffic (e.g. ICMP) often use sendmsg(); dest addr in msghdr.msg_name */
+SEC("tracepoint/syscalls/sys_enter_sendmsg")
+int trace_sendmsg_tp(struct sys_enter_ctx *ctx)
+{
+	void *msg_ptr = (void *)ctx->args[1];
+	void *addr = (void *)0;
+	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
+	if (!e) return 0;
+	e->type = 2; /* sendto/sendmsg both as "sendto" in userspace */
+	e->pid = bpf_get_current_pid_tgid() >> 32;
+	e->tid = (__u32)bpf_get_current_pid_tgid();
+	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+	bpf_get_current_comm(&e->comm, sizeof(e->comm));
+	e->family = 0;
+	e->dport = 0;
+	e->daddr_v4 = 0;
+	__builtin_memset(e->daddr_v6, 0, 16);
+	if (msg_ptr && bpf_probe_read_user(&addr, sizeof(addr), msg_ptr) == 0 && addr)
+		read_sockaddr(addr, e);
+	bpf_ringbuf_submit(e, 0);
+	return 0;
+}
+
+/* accept4: tetap kretprobe (tracepoint sys_exit_accept4 ada, tapi addr diisi setelah return) */
 SEC("kretprobe/__x64_sys_accept4")
 int trace_accept4_ret(struct pt_regs *ctx)
 {
-	/* Parm2 is the sockaddr *addr (output); kernel fills it on success */
 	void *addr = (void *)PT_REGS_PARM2(ctx);
 	struct network_event_t *e = bpf_ringbuf_reserve(&network_events, sizeof(*e), 0);
 	if (!e) return 0;
-	e->type = 3; /* accept */
+	e->type = 3;
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	if (!read_sockaddr(addr, e)) {
-		bpf_ringbuf_discard(e, 0);
-		return 0;
-	}
+	e->family = 0;
+	e->dport = 0;
+	e->daddr_v4 = 0;
+	__builtin_memset(e->daddr_v6, 0, 16);
+	if (addr)
+		read_sockaddr(addr, e);
 	bpf_ringbuf_submit(e, 0);
 	return 0;
 }

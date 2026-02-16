@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* EDR eBPF: monitor execve (process execution) via kprobe */
+/* EDR eBPF: execve via tracepoint (stable across kernels). */
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -23,16 +23,18 @@ struct {
 	__uint(max_entries, 256 * 4096);
 } events SEC(".maps");
 
-static __always_inline void* get_arg1(struct pt_regs *ctx)
-{
-	return (void *)PT_REGS_PARM1(ctx);
-}
+/* Tracepoint sys_enter_execve: common (16) + id (8) + args[6] (48). args[0]=filename */
+struct sys_enter_ctx {
+	__u64 _pad[2];
+	long id;
+	unsigned long args[6];
+};
 
-SEC("kprobe/__x64_sys_execve")
-int trace_execve(struct pt_regs *ctx)
+SEC("tracepoint/syscalls/sys_enter_execve")
+int trace_execve(struct sys_enter_ctx *ctx)
 {
-	struct event_t *e;
-	e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+	void *filename = (void *)ctx->args[0];
+	struct event_t *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
 		return 0;
 
@@ -40,10 +42,12 @@ int trace_execve(struct pt_regs *ctx)
 	e->tid = (__u32)bpf_get_current_pid_tgid();
 	e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
 	e->gid = bpf_get_current_uid_gid() >> 32;
-	e->ppid = 0; /* TODO: bpf_get_current_task + real_parent->tgid */
+	e->ppid = 0;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
-	bpf_probe_read_user_str(&e->filename, sizeof(e->filename), get_arg1(ctx));
+	__builtin_memset(e->filename, 0, sizeof(e->filename));
+	if (filename)
+		bpf_probe_read_user_str(&e->filename, sizeof(e->filename), filename);
 	e->filename[MAX_FILENAME_LEN - 1] = '\0';
 
 	bpf_ringbuf_submit(e, 0);

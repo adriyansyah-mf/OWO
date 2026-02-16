@@ -45,6 +45,10 @@ type MonitorConfig struct {
 	WriteEvents *bool `yaml:"write_events"`
 	// ModuleEvents enables kernel module load (init_module/finit_module). Default true.
 	ModuleEvents *bool `yaml:"module_events"`
+	// ProcessEvents enables fork/clone/clone3 (process creation). Default false (noisy).
+	ProcessEvents *bool `yaml:"process_events"`
+	// GTFOBinsPath path to local gtfobins api.json (from contrib/scripts/fetch_gtfobins.sh). Empty = disabled.
+	GTFOBinsPath string `yaml:"gtfobins_path"`
 }
 
 type OutputConfig struct {
@@ -114,6 +118,7 @@ func Default() *Config {
 			ExitEvents:        &trueVal,
 			WriteEvents:       nil, // false = noisy
 			ModuleEvents:      &trueVal,
+			ProcessEvents:     nil, // false = noisy (fork/clone very frequent)
 		},
 		Output: OutputConfig{
 			File: FileOutputConfig{
@@ -183,6 +188,11 @@ func (c *Config) MonitorModuleEventsEnabled() bool {
 	return c.Monitor.ModuleEvents == nil || *c.Monitor.ModuleEvents
 }
 
+// MonitorProcessEventsEnabled returns whether fork/clone/clone3 monitoring is on.
+func (c *Config) MonitorProcessEventsEnabled() bool {
+	return c.Monitor.ProcessEvents != nil && *c.Monitor.ProcessEvents
+}
+
 // OutputStderrEnabled returns whether to log alerts to stderr.
 func (c *Config) OutputStderrEnabled() bool {
 	if c.Output.Stderr == nil {
@@ -201,6 +211,17 @@ func (c *Config) ResolveAgentName() {
 	}
 }
 
+// Validate returns an error if config is inconsistent (e.g. file enabled but path empty).
+func (c *Config) Validate() error {
+	if c.Output.File.Enabled && c.Output.File.Path == "" {
+		return fmt.Errorf("output.file.enabled is true but output.file.path is empty")
+	}
+	if c.Output.Remote.Enabled && c.Output.Remote.Address == "" {
+		return fmt.Errorf("output.remote.enabled is true but output.remote.address is empty")
+	}
+	return nil
+}
+
 // Normalize fills empty protocol/address defaults.
 func (c *Config) Normalize() {
 	c.ResolveAgentName()
@@ -217,4 +238,7 @@ func (c *Config) Normalize() {
 		c.Output.Remote.HTTPEndpoint = "/alerts"
 	}
 	c.Output.Remote.Protocol = strings.ToLower(c.Output.Remote.Protocol)
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
 }

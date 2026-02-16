@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
+
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -59,21 +61,44 @@ func New(objPath string) (*Monitor, error) {
 		return nil, fmt.Errorf("map %q not found", mapName)
 	}
 
-	// Attach kprobe to __x64_sys_execve (x86_64). For arm64 use __arm64_sys_execve.
-	kp, err := link.Kprobe("__x64_sys_execve", prog, nil)
-	if err != nil {
+	progSpec, ok := spec.Programs[progName]
+	if !ok {
 		coll.Close()
-		return nil, fmt.Errorf("attach kprobe: %w", err)
+		return nil, fmt.Errorf("program spec %q not found", progName)
+	}
+	sec := progSpec.SectionName
+
+	var lnk link.Link
+	if strings.HasPrefix(sec, "tracepoint/") {
+		parts := strings.SplitN(sec, "/", 3)
+		if len(parts) != 3 {
+			coll.Close()
+			return nil, fmt.Errorf("invalid tracepoint section %q", sec)
+		}
+		var err error
+		lnk, err = link.Tracepoint(parts[1], parts[2], prog, nil)
+		if err != nil {
+			coll.Close()
+			return nil, fmt.Errorf("attach tracepoint %s: %w", sec, err)
+		}
+	} else {
+		sym := strings.TrimPrefix(sec, "kprobe/")
+		var err error
+		lnk, err = link.Kprobe(sym, prog, nil)
+		if err != nil {
+			coll.Close()
+			return nil, fmt.Errorf("attach kprobe %s: %w", sec, err)
+		}
 	}
 
 	reader, err := ringbuf.NewReader(eventsMap)
 	if err != nil {
-		kp.Close()
+		lnk.Close()
 		coll.Close()
 		return nil, fmt.Errorf("ringbuf new reader: %w", err)
 	}
 
-	return &Monitor{coll: coll, link: kp, reader: reader}, nil
+	return &Monitor{coll: coll, link: lnk, reader: reader}, nil
 }
 
 // NewFromEmbed tries common paths for execve.o (current dir, bpf/, executable dir).

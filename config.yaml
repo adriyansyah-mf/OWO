@@ -15,6 +15,8 @@ monitor:
   exit_events: true      # process exit (exit_group)
   write_events: false    # write syscall (noisy; path from /proc/pid/fd)
   module_events: true    # kernel module load (init_module, finit_module)
+  process_events: true  # fork, clone, clone3 (syscall level; noisy)
+  gtfobins_path: ""    # optional: path to local gtfobins api.json (run contrib/scripts/fetch_gtfobins.sh first)
 
 output:
   file:
@@ -30,4 +32,4 @@ output:
     retry_interval: 10
 
 logging:
-  level: info
+  level: warn   # debug | info | warn | error; controls which messages are printed to stderr

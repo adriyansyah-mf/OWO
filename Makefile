@@ -28,11 +28,11 @@ BPF_CFLAGS  := -O2 -g -target bpf -D__TARGET_ARCH_$(BPF_ARCH) \
 	-I $(CURDIR)/bpf/include \
 	-Wno-address-of-packed-member
 
-.PHONY: all clean bpf go run
+.PHONY: all clean bpf go run fetch-gtfobins
 
 all: bpf go
 
-bpf: bpf/execve.o bpf/file_events.o bpf/network_events.o bpf/privilege_events.o bpf/exit_events.o bpf/write_events.o bpf/module_events.o
+bpf: bpf/execve.o bpf/file_events.o bpf/network_events.o bpf/privilege_events.o bpf/exit_events.o bpf/write_events.o bpf/module_events.o bpf/process_events.o
 
 bpf/execve.o: bpf/execve.c
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
@@ -55,6 +55,9 @@ bpf/write_events.o: bpf/write_events.c
 bpf/module_events.o: bpf/module_events.c
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
+bpf/process_events.o: bpf/process_events.c
+	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
+
 VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0")
 
 go:
@@ -63,5 +66,8 @@ go:
 run: all
 	sudo ./bin/edr-client
 
+fetch-gtfobins:
+	@sh "$(CURDIR)/contrib/scripts/fetch_gtfobins.sh"
+
 clean:
-	rm -f bpf/execve.o bpf/file_events.o bpf/network_events.o bpf/privilege_events.o bpf/exit_events.o bpf/write_events.o bpf/module_events.o bin/edr-client
+	rm -f bpf/execve.o bpf/file_events.o bpf/network_events.o bpf/privilege_events.o bpf/exit_events.o bpf/write_events.o bpf/module_events.o bpf/process_events.o bin/edr-client

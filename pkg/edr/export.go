@@ -96,16 +96,17 @@ func (e *Exporter) WriteEvent(eventJSON []byte) error {
 	}
 	e.mu.Unlock()
 	if e.remote != nil {
-		_ = e.remote.Send(nil, line)
+		go e.remote.Send(nil, line) // non-blocking; avoid slowing event pipeline
 	}
 	return nil
 }
 
-// Close closes the export file.
+// Close flushes and closes the export file.
 func (e *Exporter) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.f != nil {
+		_ = e.f.Sync()
 		err := e.f.Close()
 		e.f = nil
 		return err

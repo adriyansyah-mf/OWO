@@ -12,11 +12,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"edr-linux/pkg/behavior"
 	"edr-linux/pkg/config"
 	"edr-linux/pkg/edr"
 	"edr-linux/pkg/enrich"
+	"edr-linux/pkg/gtfobins"
+	"edr-linux/pkg/logger"
 	"edr-linux/pkg/monitor"
 	"edr-linux/pkg/proc"
 )
@@ -26,6 +29,26 @@ const (
 	treeBranch    = "├─ "
 	maxCmdlineLen = 240
 )
+
+// sanitizePath returns "-" if path from eBPF looks invalid (garbage, non-UTF-8, or not absolute).
+func sanitizePath(s string) string {
+	s = strings.TrimRight(s, "\x00")
+	if s == "" || s == "-" {
+		return "-"
+	}
+	if !strings.HasPrefix(s, "/") {
+		return "-"
+	}
+	if !utf8.ValidString(s) {
+		return "-"
+	}
+	for _, r := range s {
+		if r < 32 || r == utf8.RuneError {
+			return "-"
+		}
+	}
+	return s
+}
 
 var (
 	configPath = flag.String("config", "", "Path to config YAML. Empty = defaults (Wazuh-style flexible).")
@@ -60,6 +83,21 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	logger.SetLevel(cfg.Logging.Level)
+
+	var gtfobinsDB *gtfobins.DB
+	if cfg.Monitor.GTFOBinsPath != "" {
+		var err error
+		gtfobinsDB, err = gtfobins.Load(cfg.Monitor.GTFOBinsPath)
+		if err != nil {
+			logger.Warn("gtfobins: %v (disabled)", err)
+		} else {
+			logger.Info("GTFOBins: loaded from %s", cfg.Monitor.GTFOBinsPath)
+		}
+	}
 
 	if !cfg.MonitorExecveEnabled() {
 		log.Fatalf("no monitor enabled (monitor.execve=false). Enable at least one in config.")
@@ -68,7 +106,7 @@ func main() {
 	// Buat direktori log jika path file output di-set (supaya /var/log/edr ada meski enabled: false)
 	if cfg.Output.File.Path != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.Output.File.Path), 0755); err != nil {
-			log.Printf("warning: could not create log dir for %q: %v", cfg.Output.File.Path, err)
+			logger.Warn("could not create log dir for %q: %v", cfg.Output.File.Path, err)
 		}
 	}
 
@@ -119,14 +157,14 @@ func main() {
 		watchAll := cfg.FileWatchAllPaths()
 		fileMon, err = monitor.NewFileMonitorFromEmbed(watchAll)
 		if err != nil {
-			log.Printf("file_events: %v (disabled)", err)
+			logger.Warn("file_events: %v (disabled)", err)
 			fileMon = nil
 		} else {
 			defer fileMon.Close()
 			if watchAll {
-				log.Printf("File events: openat/unlink/rename on ALL paths (total)")
+				logger.Info("File events: openat/unlink/rename on ALL paths (total)")
 			} else {
-				log.Printf("File events: openat/unlink/rename on /etc,/usr/bin,/bin,/tmp,/dev/shm")
+				logger.Info("File events: openat/unlink/rename on /etc,/usr/bin,/bin,/tmp,/dev/shm")
 			}
 		}
 	}
@@ -134,61 +172,72 @@ func main() {
 	if cfg.MonitorNetworkEventsEnabled() {
 		netMon, err = monitor.NewNetworkMonitorFromEmbed()
 		if err != nil {
-			log.Printf("network_events: %v (disabled)", err)
+			logger.Warn("network_events: %v (disabled)", err)
 			netMon = nil
 		} else {
 			defer netMon.Close()
-			log.Printf("Network events: connect, sendto, accept (DNS=port 53)")
+			logger.Info("Network events: connect, sendto, accept (DNS=port 53)")
 		}
 	}
 	var privMon *monitor.PrivilegeMonitor
 	if cfg.MonitorPrivilegeEventsEnabled() {
 		privMon, err = monitor.NewPrivilegeMonitorFromEmbed()
 		if err != nil {
-			log.Printf("privilege_events: %v (disabled)", err)
+			logger.Warn("privilege_events: %v (disabled)", err)
 			privMon = nil
 		} else {
 			defer privMon.Close()
-			log.Printf("Privilege events: setuid/setgid/setreuid/setregid")
+			logger.Info("Privilege events: setuid/setgid/setreuid/setregid")
 		}
 	}
 	var exitMon *monitor.ExitMonitor
 	if cfg.MonitorExitEventsEnabled() {
 		exitMon, err = monitor.NewExitMonitorFromEmbed()
 		if err != nil {
-			log.Printf("exit_events: %v (disabled)", err)
+			logger.Warn("exit_events: %v (disabled)", err)
 			exitMon = nil
 		} else {
 			defer exitMon.Close()
-			log.Printf("Exit events: exit_group")
+			logger.Info("Exit events: exit_group")
 		}
 	}
 	var writeMon *monitor.WriteMonitor
 	if cfg.MonitorWriteEventsEnabled() {
 		writeMon, err = monitor.NewWriteMonitorFromEmbed()
 		if err != nil {
-			log.Printf("write_events: %v (disabled)", err)
+			logger.Warn("write_events: %v (disabled)", err)
 			writeMon = nil
 		} else {
 			defer writeMon.Close()
-			log.Printf("Write events: write (path from /proc/pid/fd)")
+			logger.Info("Write events: write (path from /proc/pid/fd)")
 		}
 	}
 	var modMon *monitor.ModuleMonitor
 	if cfg.MonitorModuleEventsEnabled() {
 		modMon, err = monitor.NewModuleMonitorFromEmbed()
 		if err != nil {
-			log.Printf("module_events: %v (disabled)", err)
+			logger.Warn("module_events: %v (disabled)", err)
 			modMon = nil
 		} else {
 			defer modMon.Close()
-			log.Printf("Module events: init_module, finit_module")
+			logger.Info("Module events: init_module, finit_module")
+		}
+	}
+	var processMon *monitor.ProcessMonitor
+	if cfg.MonitorProcessEventsEnabled() {
+		processMon, err = monitor.NewProcessMonitorFromEmbed()
+		if err != nil {
+			logger.Warn("process_events: %v (disabled)", err)
+			processMon = nil
+		} else {
+			defer processMon.Close()
+			logger.Info("Process events: fork, clone, clone3 (syscall level)")
 		}
 	}
 
 	beh := behavior.NewEngine()
 
-	fmt.Printf("OWO [%s] – exec, file, network, privilege, exit, write, module. Ctrl+C to stop.\n", cfg.Agent.Name)
+	fmt.Printf("OWO [%s] – exec, file, network, privilege, exit, write, module, process(fork/clone). Ctrl+C to stop.\n", cfg.Agent.Name)
 	fmt.Println("Send SIGUSR1 to print full process tree.")
 	if exporter != nil {
 		fmt.Printf("Output: file=%v stderr=%v remote=%v\n",
@@ -206,15 +255,16 @@ func main() {
 			for {
 				ev, err := fileMon.ReadFileEvent()
 				if err != nil {
-					continue
+					logger.Warn("[FILE] reader: %v", err)
+					return
 				}
 				beh.AddFile(ev.Pid, ev.Type, ev.Path)
 				if alerts := beh.Check(); len(alerts) > 0 {
 					for _, a := range alerts {
-						log.Printf("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
+						logger.Warn("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				log.Printf("[FILE] %s pid=%d uid=%d %s %s → %s", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
+				logger.Info("[FILE] %s pid=%d uid=%d %s %s → %s", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "file", "timestamp": time.Now().UTC(),
@@ -231,15 +281,16 @@ func main() {
 			for {
 				ev, err := netMon.ReadNetworkEvent()
 				if err != nil {
-					continue
+					logger.Warn("[NET] reader: %v", err)
+					return
 				}
 				beh.AddNetwork(ev.Pid, ev.DAddr)
 				if alerts := beh.Check(); len(alerts) > 0 {
 					for _, a := range alerts {
-						log.Printf("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
+						logger.Warn("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				log.Printf("[NET] %s pid=%d uid=%d %s → %s is_dns=%v", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr, ev.IsDNS)
+				logger.Info("[NET] %s pid=%d uid=%d %s → %s is_dns=%v", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr, ev.IsDNS)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "network", "timestamp": time.Now().UTC(),
@@ -256,9 +307,10 @@ func main() {
 			for {
 				ev, err := privMon.ReadPrivilegeEvent()
 				if err != nil {
-					continue
+					logger.Warn("[PRIVILEGE] reader: %v", err)
+					return
 				}
-				log.Printf("[PRIVILEGE] %s pid=%d uid=%d→%d gid=%d→%d %s", ev.Type, ev.Pid, ev.Uid, ev.NewUid, ev.Gid, ev.NewGid, ev.Comm)
+				logger.Info("[PRIVILEGE] %s pid=%d uid=%d→%d gid=%d→%d %s", ev.Type, ev.Pid, ev.Uid, ev.NewUid, ev.Gid, ev.NewGid, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "privilege", "timestamp": time.Now().UTC(),
@@ -275,9 +327,10 @@ func main() {
 			for {
 				ev, err := exitMon.ReadExitEvent()
 				if err != nil {
-					continue
+					logger.Warn("[EXIT] reader: %v", err)
+					return
 				}
-				log.Printf("[EXIT] pid=%d uid=%d exit_code=%d %s", ev.Pid, ev.Uid, ev.ExitCode, ev.Comm)
+				logger.Info("[EXIT] pid=%d uid=%d exit_code=%d %s", ev.Pid, ev.Uid, ev.ExitCode, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "exit", "timestamp": time.Now().UTC(),
@@ -293,9 +346,10 @@ func main() {
 			for {
 				ev, err := writeMon.ReadWriteEvent()
 				if err != nil {
-					continue
+					logger.Warn("[WRITE] reader: %v", err)
+					return
 				}
-				log.Printf("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
+				logger.Info("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "write", "timestamp": time.Now().UTC(),
@@ -311,9 +365,10 @@ func main() {
 			for {
 				ev, err := modMon.ReadModuleEvent()
 				if err != nil {
-					continue
+					logger.Warn("[MODULE] reader: %v", err)
+					return
 				}
-				log.Printf("[MODULE] %s pid=%d uid=%d %s", ev.Type, ev.Pid, ev.Uid, ev.Comm)
+				logger.Info("[MODULE] %s pid=%d uid=%d %s", ev.Type, ev.Pid, ev.Uid, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "module", "timestamp": time.Now().UTC(),
@@ -324,6 +379,39 @@ func main() {
 			}
 		}()
 	}
+	if processMon != nil {
+		go func() {
+			for {
+				ev, err := processMon.ReadProcessEvent()
+				if err != nil {
+					logger.Warn("[PROCESS] reader: %v", err)
+					return
+				}
+				logger.Info("[PROCESS] %s parent_pid=%d child_pid=%d uid=%d %s", ev.Type, ev.ParentPid, ev.ChildPid, ev.Uid, ev.Comm)
+				if exporter != nil {
+					eventJSON, _ := json.Marshal(map[string]interface{}{
+						"event_type": "process", "timestamp": time.Now().UTC(),
+						"type": ev.Type, "parent_pid": ev.ParentPid, "parent_tid": ev.ParentTid, "child_pid": ev.ChildPid, "uid": ev.Uid, "comm": ev.Comm,
+					})
+					_ = exporter.WriteEvent(eventJSON)
+				}
+			}
+		}()
+	}
+
+	// Execve events via channel so main can respond to done/treeDump without blocking on ReadEvent.
+	execChan := make(chan monitor.ExecveEvent, 256)
+	go func() {
+		defer close(execChan)
+		for {
+			ev, err := m.ReadEvent()
+			if err != nil {
+				logger.Warn("execve reader: %v", err)
+				return
+			}
+			execChan <- ev
+		}
+	}()
 
 	for {
 		select {
@@ -332,19 +420,14 @@ func main() {
 		case <-treeDump:
 			printProcessTree(tree)
 			continue
-		default:
-			ev, err := m.ReadEvent()
-			if err != nil {
-				log.Printf("read event: %v", err)
-				continue
+		case ev, ok := <-execChan:
+			if !ok {
+				return
 			}
 
 			ts := time.Now().UTC()
 			comm := strings.TrimRight(string(ev.Comm[:]), "\x00")
-			path := strings.TrimRight(string(ev.Filename[:]), "\x00")
-			if path == "" {
-				path = "-"
-			}
+			path := sanitizePath(string(ev.Filename[:]))
 
 			ppid := ev.Ppid
 			if ppid == 0 {
@@ -362,7 +445,7 @@ func main() {
 			parentPath := "-"
 			parentCmdline := ""
 			if parent := tree[ppid]; parent != nil {
-				parentPath = parent.Path
+				parentPath = sanitizePath(parent.Path)
 				parentCmdline = parent.Cmdline
 			}
 
@@ -372,7 +455,6 @@ func main() {
 			}
 			tree[ev.Pid] = node
 
-			// Untuk SHA256/inode: pakai path dari eBPF; kalau "-" atau kosong pakai exe dari /proc
 			enrichPath := path
 			if enrichPath == "" || enrichPath == "-" {
 				enrichPath = exe
@@ -382,12 +464,12 @@ func main() {
 			beh.AddExec(ev.Pid, path)
 			if alerts := beh.Check(); len(alerts) > 0 {
 				for _, a := range alerts {
-					log.Printf("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
+					logger.Warn("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 				}
 			}
 
 			if exporter != nil {
-				eventJSON, _ := json.Marshal(map[string]interface{}{
+				evMap := map[string]interface{}{
 					"event_type": "execve", "timestamp": ts, "pid": ev.Pid, "ppid": ppid, "tid": ev.Tid,
 					"uid": ev.Uid, "gid": ev.Gid, "comm": comm, "path": path,
 					"exe": exe, "cmdline": cmdline,
@@ -395,7 +477,17 @@ func main() {
 					"sha256": enrichCtx.SHA256, "inode": enrichCtx.Inode,
 					"is_tty": enrichCtx.IsTTY, "container_id": enrichCtx.ContainerID,
 					"load_time_ns": enrichCtx.LoadTime, "signed": enrichCtx.SignedStatus,
-				})
+				}
+				if gtfobinsDB != nil {
+					binName := gtfobins.BinaryNameFromPath(exe)
+					if binName == "" {
+						binName = gtfobins.BinaryNameFromPath(path)
+					}
+					if fns := gtfobinsDB.Lookup(binName); len(fns) > 0 {
+						evMap["gtfobins"] = fns
+					}
+				}
+				eventJSON, _ := json.Marshal(evMap)
 				_ = exporter.WriteEvent(eventJSON)
 			}
 		}

@@ -65,13 +65,22 @@ func NewNetworkMonitor(objPath string) (*NetworkMonitor, error) {
 			continue
 		}
 		sec := progSpec.SectionName
-		sym := strings.TrimPrefix(sec, "kretprobe/")
-		sym = strings.TrimPrefix(sym, "kprobe/")
 		var l link.Link
-		if strings.HasPrefix(sec, "kretprobe/") {
+		if strings.HasPrefix(sec, "tracepoint/") {
+			// tracepoint/syscalls/sys_enter_connect -> group=syscalls, name=sys_enter_connect
+			parts := strings.SplitN(sec, "/", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			l, err = link.Tracepoint(parts[1], parts[2], prog, nil)
+		} else if strings.HasPrefix(sec, "kretprobe/") {
+			sym := strings.TrimPrefix(sec, "kretprobe/")
 			l, err = link.Kretprobe(sym, prog, nil)
-		} else {
+		} else if strings.HasPrefix(sec, "kprobe/") {
+			sym := strings.TrimPrefix(sec, "kprobe/")
 			l, err = link.Kprobe(sym, prog, nil)
+		} else {
+			continue
 		}
 		if err != nil {
 			for _, lnk := range links {
@@ -147,7 +156,8 @@ func (n *NetworkMonitor) ReadNetworkEvent() (NetworkEvent, error) {
 		ev.Family = "inet6"
 		ev.DAddr = "[" + net.IP(raw[24:40]).String() + "]:" + fmt.Sprintf("%d", ev.DPort)
 	} else {
-		ev.DAddr = fmt.Sprintf(":%d", ev.DPort)
+		ev.Family = "unknown"
+		ev.DAddr = fmt.Sprintf("?:%d", ev.DPort)
 	}
 	return ev, nil
 }
