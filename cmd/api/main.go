@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -263,7 +264,16 @@ func handleHostByID(w http.ResponseWriter, r *http.Request) {
 
 func handleProcessTree(w http.ResponseWriter, r *http.Request, hostID string) {
 	if storePg != nil {
-		list, err := storePg.ListProcessTree(r.Context(), hostID, false)
+		limit := 300
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				if n > 2000 {
+					n = 2000
+				}
+				limit = n
+			}
+		}
+		list, err := storePg.ListProcessTree(r.Context(), hostID, false, limit)
 		if err == nil && len(list) > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(list)

@@ -25,7 +25,9 @@ output:
     enabled: false
 
 monitor:
+  process_snapshot_interval: 60   # periodic ps aux (no per-execve storage)
   execve: true
+  sigma_rules_path: "sigma/rules"   # hanya execve yg match Sigma rules tampil di stdout
   file_events: true
   file_watch_all_paths: false
   network_events: true

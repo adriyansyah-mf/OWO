@@ -27,7 +27,9 @@ output:
     retry_interval: 10
 
 monitor:
+  process_snapshot_interval: 60   # periodic ps aux (no per-execve storage)
   execve: true
+  sigma_rules_path: "sigma/rules"   # hanya execve yg match Sigma rules tampil di stdout
   ebpf_path: ""
   file_events: true
   file_watch_all_paths: false

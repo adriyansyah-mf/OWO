@@ -31,11 +31,13 @@ export default function ProcessTreePage() {
   const [loading, setLoading] = useState(true);
   const [killing, setKilling] = useState<number | null>(null);
   const [view, setView] = useState<'grid' | 'hex'>('grid');
+  const [gridLimit, setGridLimit] = useState(80);
+  const [hexLimit, setHexLimit] = useState(120);
   const api = getApiBase() || 'http://localhost:8080';
 
   useEffect(() => {
     const headers = getAuthHeaders();
-    fetch(`${getApiBase() || 'http://localhost:8080'}/api/v1/hosts/${hostId}/process-tree`, { headers })
+    fetch(`${getApiBase() || 'http://localhost:8080'}/api/v1/hosts/${hostId}/process-tree?limit=300`, { headers })
       .then(r => r.ok ? r.json() : null)
       .then(data => data && Array.isArray(data) ? setTree(data) : setTree([]))
       .catch(() => setTree([]))
@@ -115,7 +117,7 @@ export default function ProcessTreePage() {
         ) : view === 'hex' ? (
           <div style={{ overflow: 'auto', maxHeight: 500 }}>
             <svg width={svgW} height={svgH} style={{ display: 'block' }}>
-              {hexLayout.map(({ p, x, y }, i) => {
+              {hexLayout.slice(0, hexLimit).map(({ p, x, y }, i) => {
                 const r = 42;
                 const isHigh = p.risk === 'high' || (p.mitre?.length || p.gtfobins?.length);
                 return (
@@ -150,10 +152,18 @@ export default function ProcessTreePage() {
                 );
               })}
             </svg>
+            {hexLayout.length > hexLimit && (
+              <button
+                onClick={() => setHexLimit(prev => Math.min(prev + 100, hexLayout.length))}
+                style={{ marginTop: 12, padding: '8px 16px', borderRadius: 8, border: '2px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}
+              >
+                + Show {Math.min(100, hexLayout.length - hexLimit)} more
+              </button>
+            )}
           </div>
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            {tree.map((p: any) => (
+            {tree.slice(0, gridLimit).map((p: any) => (
               <div
                 key={`${p.pid}-${p.start_ts}`}
                 style={{
@@ -190,6 +200,14 @@ export default function ProcessTreePage() {
                 </button>
               </div>
             ))}
+            {tree.length > gridLimit && (
+              <button
+                onClick={() => setGridLimit(prev => Math.min(prev + 100, tree.length))}
+                style={{ width: 160, padding: 14, borderRadius: 8, border: '2px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}
+              >
+                + Show {Math.min(100, tree.length - gridLimit)} more
+              </button>
+            )}
           </div>
         )}
       </div>

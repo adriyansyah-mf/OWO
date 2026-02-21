@@ -49,6 +49,10 @@ type MonitorConfig struct {
 	ProcessEvents *bool `yaml:"process_events"`
 	// GTFOBinsPath path to local gtfobins api.json (from contrib/scripts/fetch_gtfobins.sh). Empty = disabled.
 	GTFOBinsPath string `yaml:"gtfobins_path"`
+	// ProcessSnapshotIntervalSeconds: periodic process list (ps aux style) sent to server. 0 = disabled. Default 60.
+	ProcessSnapshotIntervalSeconds int `yaml:"process_snapshot_interval"`
+	// SigmaRulesPath: path to Sigma rules for stdout filter (only show execve that match). Empty = show all when stderr enabled.
+	SigmaRulesPath string `yaml:"sigma_rules_path"`
 }
 
 type OutputConfig struct {
@@ -128,6 +132,7 @@ func Default() *Config {
 			WriteEvents:       nil, // false = noisy
 			ModuleEvents:      &trueVal,
 			ProcessEvents:     nil, // false = noisy (fork/clone very frequent)
+			ProcessSnapshotIntervalSeconds: 60,
 		},
 		Output: OutputConfig{
 			File: FileOutputConfig{

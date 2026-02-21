@@ -1,8 +1,6 @@
 # EDR Platform — C2 / Backend Stack
 # Run: docker compose -f deploy/docker-compose.yml up -d
 
-version: "3.9"
-
 services:
   # --- Message Bus ---
   nats:

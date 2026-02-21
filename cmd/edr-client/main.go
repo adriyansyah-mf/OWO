@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,13 +17,16 @@ import (
 
 	"edr-linux/pkg/behavior"
 	"edr-linux/pkg/config"
+	"edr-linux/pkg/detection"
 	"edr-linux/pkg/edr"
 	"edr-linux/pkg/enrich"
+	"edr-linux/pkg/events"
 	"edr-linux/pkg/gtfobins"
 	"edr-linux/pkg/ir"
 	"edr-linux/pkg/logger"
 	"edr-linux/pkg/monitor"
 	"edr-linux/pkg/proc"
+	"edr-linux/pkg/sigma"
 
 	"github.com/nats-io/nats.go"
 )
@@ -99,6 +103,18 @@ func main() {
 			logger.Warn("gtfobins: %v (disabled)", err)
 		} else {
 			logger.Info("GTFOBins: loaded from %s", cfg.Monitor.GTFOBinsPath)
+		}
+	}
+
+	var sigmaEng *detection.Engine
+	if p := cfg.Monitor.SigmaRulesPath; p != "" {
+		rules, err := sigma.LoadDir(p)
+		if err != nil {
+			logger.Warn("sigma rules %s: %v (stdout shows all)", p, err)
+		} else {
+			sigmaEng = detection.NewEngine()
+			sigmaEng.SetRules(rules)
+			logger.Info("sigma: %d rules for stdout filter", len(rules))
 		}
 	}
 
@@ -280,6 +296,52 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 	signal.Notify(treeDump, syscall.SIGUSR1)
 
+	// Periodic process snapshot (ps aux style) — replaces per-execve storage
+	interval := cfg.Monitor.ProcessSnapshotIntervalSeconds
+	if interval <= 0 {
+		interval = 60 // default
+	}
+	if exporter != nil && opts.Nats != nil {
+		go func() {
+			ticker := time.NewTicker(time.Duration(interval) * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				procs := proc.ListAllProcesses()
+				if len(procs) == 0 {
+					continue
+				}
+				procMaps := make([]map[string]interface{}, 0, len(procs))
+				for _, p := range procs {
+					m := map[string]interface{}{
+						"pid": p.Pid, "ppid": p.Ppid, "exe": p.Exe, "cmdline": p.Cmdline,
+						"uid": p.Uid, "gid": p.Gid, "comm": p.Comm,
+					}
+					if gtfobinsDB != nil {
+						binName := gtfobins.BinaryNameFromPath(p.Exe)
+						if binName == "" {
+							binName = p.Comm
+						}
+						if fns := gtfobinsDB.Lookup(binName); len(fns) > 0 {
+							m["gtfobins"] = fns
+						}
+						if mitre := gtfobinsDB.LookupMITRE(binName); len(mitre) > 0 {
+							m["mitre"] = mitre
+						}
+					}
+					procMaps = append(procMaps, m)
+				}
+				evMap := map[string]interface{}{
+					"event_type": "process_snapshot",
+					"timestamp":  time.Now().UTC(),
+					"processes":  procMaps,
+				}
+				eventJSON, _ := json.Marshal(evMap)
+				_ = exporter.WriteEvent(eventJSON, false)
+			}
+		}()
+		logger.Info("process snapshot: every %ds", interval)
+	}
+
 	if fileMon != nil {
 		go func() {
 			for {
@@ -301,7 +363,7 @@ func main() {
 						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid,
 						"comm": ev.Comm, "path": ev.Path, "path2": ev.Path2,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -327,7 +389,7 @@ func main() {
 						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid,
 						"comm": ev.Comm, "daddr": ev.DAddr, "dport": ev.DPort, "is_dns": ev.IsDNS,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -347,7 +409,7 @@ func main() {
 						"type": ev.Type, "pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "gid": ev.Gid,
 						"new_uid": ev.NewUid, "new_gid": ev.NewGid, "comm": ev.Comm,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -366,7 +428,7 @@ func main() {
 						"event_type": "exit", "timestamp": time.Now().UTC(),
 						"pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "exit_code": ev.ExitCode, "comm": ev.Comm,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -385,7 +447,7 @@ func main() {
 						"event_type": "write", "timestamp": time.Now().UTC(),
 						"pid": ev.Pid, "tid": ev.Tid, "uid": ev.Uid, "fd": ev.Fd, "count": ev.Count, "path": ev.Path, "comm": ev.Comm,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -404,7 +466,7 @@ func main() {
 						"event_type": "module", "timestamp": time.Now().UTC(),
 						"type": ev.Type, "pid": ev.Pid, "uid": ev.Uid, "comm": ev.Comm,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -423,7 +485,7 @@ func main() {
 						"event_type": "process", "timestamp": time.Now().UTC(),
 						"type": ev.Type, "parent_pid": ev.ParentPid, "parent_tid": ev.ParentTid, "child_pid": ev.ChildPid, "uid": ev.Uid, "comm": ev.Comm,
 					})
-					_ = exporter.WriteEvent(eventJSON)
+					_ = exporter.WriteEvent(eventJSON, false)
 				}
 			}
 		}()
@@ -521,10 +583,102 @@ func main() {
 					}
 				}
 				eventJSON, _ := json.Marshal(evMap)
-				_ = exporter.WriteEvent(eventJSON)
+				logToStderr := true
+				if sigmaEng != nil {
+					// Gunakan path dari eBPF (ev.Filename) sebagai fallback untuk Exe: proc.Exe()
+					// sering kosong karena nc/sh exit cepat (connection refused) sebelum kita baca /proc.
+					exeForSigma := exe
+					if exeForSigma == "" || exeForSigma == "-" {
+						exeForSigma = path
+					}
+					var mitre, gtfobinsFns []string
+					if gtfobinsDB != nil {
+						binName := gtfobins.BinaryNameFromPath(exeForSigma)
+						if binName == "" {
+							binName = gtfobins.BinaryNameFromPath(path)
+						}
+						gtfobinsFns = gtfobinsDB.Lookup(binName)
+						mitre = gtfobinsDB.LookupMITRE(binName)
+					}
+					env := events.AgentEnvelope{
+						AgentHost: cfg.Agent.Hostname,
+						AgentName: cfg.Agent.Name,
+						Event: events.RawEvent{
+							EventType:   "execve",
+							Timestamp:  ts,
+							Pid:         ev.Pid,
+							Ppid:        ppid,
+							Comm:        comm,
+							Exe:         exeForSigma,
+							Cmdline:     cmdline,
+							Uid:         ev.Uid,
+							Gid:         ev.Gid,
+							ParentPath:  parentPath,
+							ParentCmd:   parentCmdline,
+							SHA256:      enrichCtx.SHA256,
+							MitreAttck:  mitre,
+							GTFOBins:    gtfobinsFns,
+						},
+					}
+					norm := buildNorm(&env)
+					matched := sigmaEng.Eval(norm)
+					logToStderr = len(matched) > 0
+				}
+				_ = exporter.WriteEvent(eventJSON, logToStderr)
 			}
 		}
 	}
+}
+
+// buildNorm converts AgentEnvelope to NormalizedEvent (same logic as cmd/normalize).
+func buildNorm(env *events.AgentEnvelope) *events.NormalizedEvent {
+	ev := &env.Event
+	hostID := env.AgentHost
+	if hostID == "" {
+		hostID = env.AgentName
+	}
+	ts := ev.Timestamp
+	if ts.IsZero() {
+		ts = time.Now()
+	}
+	name := filepath.Base(ev.Exe)
+	if name == "" {
+		name = ev.Comm
+	}
+	norm := &events.NormalizedEvent{
+		Timestamp: ts,
+		TenantID:  env.TenantID,
+		HostID:    hostID,
+		EventID:   "ev-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		EventType: ev.EventType,
+		Process: events.ProcessInfo{
+			Pid:         ev.Pid,
+			Ppid:       ev.Ppid,
+			Executable:  ev.Exe,
+			CommandLine: ev.Cmdline,
+			Name:        name,
+			Start:       ts,
+		},
+		User: events.UserInfo{ID: strconv.FormatUint(uint64(ev.Uid), 10)},
+		Host: events.HostInfo{Hostname: env.AgentHost},
+		Threat: events.ThreatInfo{
+			Mitre:    ev.MitreAttck,
+			GTFOBins: ev.GTFOBins,
+		},
+		Raw: map[string]interface{}{
+			"pid": ev.Pid, "ppid": ev.Ppid, "exe": ev.Exe, "cmdline": ev.Cmdline,
+		},
+	}
+	if ev.SHA256 != "" {
+		norm.Process.Hash = &events.HashInfo{SHA256: ev.SHA256}
+	}
+	if ev.ParentPath != "" || ev.ParentCmd != "" {
+		norm.Process.Parent = &events.ProcessInfo{
+			Executable:  ev.ParentPath,
+			CommandLine: ev.ParentCmd,
+		}
+	}
+	return norm
 }
 
 func printProcessTree(tree map[uint32]*procNode) {

@@ -74,8 +74,9 @@ func NewExporter(opts ExporterOptions) (*Exporter, error) {
 	return e, nil
 }
 
-// WriteEvent appends one event as a JSON line to file/stderr and sends to remote. Monitoring-only (no verdict/score).
-func (e *Exporter) WriteEvent(eventJSON []byte) error {
+// WriteEvent appends one event as a JSON line to file/stderr and sends to remote.
+// logToStderr: when true and alsoLog enabled, also write to stderr (e.g. only Sigma-matched events).
+func (e *Exporter) WriteEvent(eventJSON []byte, logToStderr bool) error {
 	rec := EventRecord{
 		AgentName:  e.agentName,
 		AgentHost:  e.agentHost,
@@ -92,7 +93,7 @@ func (e *Exporter) WriteEvent(eventJSON []byte) error {
 	if e.f != nil {
 		_, _ = e.f.Write(lineNL)
 	}
-	if e.alsoLog {
+	if e.alsoLog && logToStderr {
 		os.Stderr.Write(lineNL)
 	}
 	e.mu.Unlock()

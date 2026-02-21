@@ -243,8 +243,74 @@ func (s *PostgresStore) MarkProcessExit(ctx context.Context, hostID string, pid 
 	return err
 }
 
+// ReplaceProcessTree replaces the process tree for a host with a new snapshot (periodic ps aux style).
+func (s *PostgresStore) ReplaceProcessTree(ctx context.Context, tenantID, hostID string, procs []map[string]interface{}) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `DELETE FROM process_tree WHERE host_id = $1`, hostID)
+	if err != nil {
+		return err
+	}
+	for _, p := range procs {
+		pid, _ := toInt(p["pid"])
+		ppid, _ := toInt(p["ppid"])
+		exe, _ := p["exe"].(string)
+		cmdline, _ := p["cmdline"].(string)
+		mitre, _ := toStringSlice(p["mitre"])
+		gtfobins, _ := toStringSlice(p["gtfobins"])
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO process_tree (tenant_id, host_id, pid, ppid, exe, cmdline, mitre, gtfobins)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, tenantID, hostID, pid, ppid, exe, cmdline, pq.Array(mitre), pq.Array(gtfobins))
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func toInt(v interface{}) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	default:
+		return 0, false
+	}
+}
+
+func toStringSlice(v interface{}) ([]string, bool) {
+	if v == nil {
+		return nil, true
+	}
+	switch x := v.(type) {
+	case []string:
+		return x, true
+	case []interface{}:
+		var out []string
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
 // ListProcessTree returns process tree for host (live processes only by default).
-func (s *PostgresStore) ListProcessTree(ctx context.Context, hostID string, includeExited bool) ([]map[string]interface{}, error) {
+// limit 0 = no limit; 300-500 recommended for UI performance.
+func (s *PostgresStore) ListProcessTree(ctx context.Context, hostID string, includeExited bool, limit int) ([]map[string]interface{}, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -253,11 +319,16 @@ func (s *PostgresStore) ListProcessTree(ctx context.Context, hostID string, incl
 		FROM process_tree
 		WHERE host_id = $1
 	`
+	args := []interface{}{hostID}
 	if !includeExited {
 		q += ` AND exit_ts IS NULL`
 	}
-	q += ` ORDER BY start_ts`
-	rows, err := s.db.QueryContext(ctx, q, hostID)
+	q += ` ORDER BY start_ts DESC`
+	if limit > 0 {
+		q += ` LIMIT $2`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

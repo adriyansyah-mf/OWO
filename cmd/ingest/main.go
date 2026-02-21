@@ -40,39 +40,72 @@ func main() {
 	defer nc.Close()
 
 	sub, err := nc.Subscribe("events.>", func(m *nats.Msg) {
-		// Only process agent events (events.default, events.{tenant}), not pipeline internal subjects
 		if m.Subject == "events.normalize" || m.Subject == "events.detection" {
 			return
 		}
+		agentSubj := "events." + tenantID
+		if tenantID == "" {
+			agentSubj = "events.default"
+		}
+		if m.Subject != "events.default" && m.Subject != agentSubj {
+			return
+		}
+		var raw map[string]interface{}
+		if err := json.Unmarshal(m.Data, &raw); err != nil {
+			log.Printf("unmarshal: %v", err)
+			return
+		}
+		agentHost, _ := raw["agent_hostname"].(string)
+		agentName, _ := raw["agent_name"].(string)
+		if agentHost == "" {
+			agentHost = agentName
+		}
+		hostID := agentHost
+		tenID, _ := raw["tenant_id"].(string)
+		if tenID == "" {
+			tenID = tenantID
+		}
+		ev, _ := raw["event"].(map[string]interface{})
+		evType, _ := ev["event_type"].(string)
+
+		if evType == "process_snapshot" {
+			if storePg != nil {
+				storePg.UpsertHost(ctx, tenID, hostID, agentHost, agentName)
+				procs, _ := ev["processes"].([]interface{})
+				var procMaps []map[string]interface{}
+				for _, p := range procs {
+					pm, ok := p.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					procMaps = append(procMaps, pm)
+				}
+				if len(procMaps) > 0 {
+					if err := storePg.ReplaceProcessTree(ctx, tenID, hostID, procMaps); err != nil {
+						log.Printf("ReplaceProcessTree: %v", err)
+					} else if os.Getenv("DEBUG") != "" {
+						log.Printf("ingest: %s process_snapshot %d procs", hostID, len(procMaps))
+					}
+				}
+			}
+			return
+		}
+
 		var env events.AgentEnvelope
 		if err := json.Unmarshal(m.Data, &env); err != nil {
-			log.Printf("unmarshal: %v", err)
+			log.Printf("ingest: unmarshal AgentEnvelope: %v (subject=%s)", err, m.Subject)
 			return
 		}
 		if env.TenantID == "" {
 			env.TenantID = tenantID
 		}
-		hostID := env.AgentHost
-		if hostID == "" {
-			hostID = env.AgentName
-		}
-
 		if storePg != nil {
 			storePg.UpsertHost(ctx, env.TenantID, hostID, env.AgentHost, env.AgentName)
-			ev := &env.Event
-			if ev.EventType == "execve" {
-				storePg.InsertProcessNode(ctx, env.TenantID, hostID, int(ev.Pid), int(ev.Ppid), ev.Exe, ev.Cmdline, ev.MitreAttck, ev.GTFOBins)
-			}
-			if ev.EventType == "exit" || ev.EventType == "exit_group" {
-				storePg.MarkProcessExit(ctx, hostID, int(ev.Pid))
-			}
 		}
-
 		out, _ := json.Marshal(env)
 		nc.Publish("events.normalize", out)
-
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("ingest: %s %s pid=%d", hostID, env.Event.EventType, env.Event.Pid)
+			log.Printf("ingest: %s %s pid=%v", hostID, env.Event.EventType, env.Event.Pid)
 		}
 	})
 	if err != nil {

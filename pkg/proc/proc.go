@@ -4,6 +4,7 @@ package proc
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -49,4 +50,86 @@ func Exe(pid uint32) string {
 		return ""
 	}
 	return s
+}
+
+// ProcInfo is a snapshot of one process (ps aux style).
+type ProcInfo struct {
+	Pid     int    `json:"pid"`
+	Ppid    int    `json:"ppid"`
+	Exe     string `json:"exe"`
+	Cmdline string `json:"cmdline"`
+	Uid     int    `json:"uid"`
+	Gid     int    `json:"gid"`
+	Comm    string `json:"comm"`
+}
+
+// ListAllProcesses reads /proc and returns current processes (like ps aux).
+func ListAllProcesses() []ProcInfo {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var out []ProcInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		ppid := int(PpidFromStat(uint32(pid)))
+		exe := Exe(uint32(pid))
+		cmdline := Cmdline(uint32(pid))
+		if cmdline == "" && exe != "" {
+			cmdline = filepath.Base(exe)
+		}
+		if cmdline == "" {
+			cmdline = readComm(pid)
+		}
+		uid, gid := readUidGid(pid)
+		comm := readComm(pid)
+		out = append(out, ProcInfo{
+			Pid:     pid,
+			Ppid:    ppid,
+			Exe:     exe,
+			Cmdline: cmdline,
+			Uid:     uid,
+			Gid:     gid,
+			Comm:    comm,
+		})
+	}
+	return out
+}
+
+func readComm(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func readUidGid(pid int) (uid, gid int) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, 0
+	}
+	s := string(b)
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, "Uid:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				uid, _ = strconv.Atoi(fields[1])
+			}
+		}
+		if strings.HasPrefix(line, "Gid:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				gid, _ = strconv.Atoi(fields[1])
+			}
+			break
+		}
+	}
+	return uid, gid
 }

