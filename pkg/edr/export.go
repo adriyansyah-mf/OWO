@@ -28,23 +28,25 @@ type EventRecord struct {
 	Event      json.RawMessage `json:"event"`
 }
 
-// Exporter writes alert records to file, stderr, and/or remote (Wazuh-style).
+// Exporter writes alert records to file, stderr, remote, and/or NATS.
 type Exporter struct {
-	mu       sync.Mutex
-	path     string
-	f        *os.File
-	alsoLog  bool
-	remote   *RemoteOutput
+	mu         sync.Mutex
+	path       string
+	f          *os.File
+	alsoLog    bool
+	remote     *RemoteOutput
+	nats       *NatsOutput
 	agentName  string
 	agentHost  string
 	agentGroup string
 }
 
-// ExporterOptions configures file, stderr, remote, and agent identity.
+// ExporterOptions configures file, stderr, remote, NATS, and agent identity.
 type ExporterOptions struct {
 	FilePath   string
 	Stderr     bool
 	Remote     *RemoteOutput
+	Nats       *NatsOutput
 	AgentName  string
 	AgentHost  string
 	AgentGroup string
@@ -55,20 +57,19 @@ func NewExporter(opts ExporterOptions) (*Exporter, error) {
 	e := &Exporter{
 		alsoLog:    opts.Stderr,
 		remote:     opts.Remote,
+		nats:       opts.Nats,
 		agentName:  opts.AgentName,
 		agentHost:  opts.AgentHost,
 		agentGroup: opts.AgentGroup,
 	}
 	if opts.FilePath != "" {
 		e.path = opts.FilePath
-		if err := os.MkdirAll(filepath.Dir(opts.FilePath), 0755); err != nil {
-			return nil, err
+		if err := os.MkdirAll(filepath.Dir(opts.FilePath), 0755); err == nil {
+			if f, err := os.OpenFile(opts.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+				e.f = f
+			}
+			// If file open fails (e.g. permission), continue without file output; NATS/remote still work
 		}
-		f, err := os.OpenFile(opts.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, err
-		}
-		e.f = f
 	}
 	return e, nil
 }
@@ -96,7 +97,10 @@ func (e *Exporter) WriteEvent(eventJSON []byte) error {
 	}
 	e.mu.Unlock()
 	if e.remote != nil {
-		go e.remote.Send(nil, line) // non-blocking; avoid slowing event pipeline
+		go e.remote.Send(nil, line)
+	}
+	if e.nats != nil {
+		go e.nats.Send(nil, line)
 	}
 	return nil
 }

@@ -1,15 +1,21 @@
 module edr-linux
 
-go 1.21.0
+go 1.23.0
 
-toolchain go1.24.9
+toolchain go1.24.13
 
 require (
 	github.com/cilium/ebpf v0.15.0
+	github.com/lib/pq v1.10.9
+	github.com/nats-io/nats.go v1.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
+	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/nats-io/nkeys v0.4.11 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
+	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/sys v0.32.0 // indirect
 )

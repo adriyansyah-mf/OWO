@@ -1,0 +1,20 @@
+# EDR Platform - build all services
+.PHONY: all backend agent frontend docker
+
+all: backend agent
+
+backend:
+	go build -o bin/ingest ./cmd/ingest
+	go build -o bin/normalize ./cmd/normalize
+	go build -o bin/detection ./cmd/detection
+	go build -o bin/ir-dispatcher ./cmd/ir-dispatcher
+	go build -o bin/api ./cmd/api
+
+agent:
+	$(MAKE) -f Makefile bpf go
+
+frontend:
+	cd frontend && npm install && npm run build
+
+docker:
+	cd deploy && docker compose -f docker-compose.yml build

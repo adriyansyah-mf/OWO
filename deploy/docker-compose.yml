@@ -1,0 +1,153 @@
+# EDR Platform — C2 / Backend Stack
+# Run: docker compose -f deploy/docker-compose.yml up -d
+
+version: "3.9"
+
+services:
+  # --- Message Bus ---
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222", "-sd", "/data"]
+    ports:
+      - "4222:4222"   # Client
+      - "8222:8222"   # HTTP monitoring
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # --- Databases ---
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    environment:
+      POSTGRES_DB: edr
+      POSTGRES_USER: edr
+      POSTGRES_PASSWORD: edr_secret
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edr"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  ingest:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    command: ["/usr/local/bin/ingest"]
+    depends_on:
+      nats: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN: postgres://edr:edr_secret@postgres:5432/edr?sslmode=disable
+      TENANT_ID: default
+      DEBUG: "1"
+    restart: unless-stopped
+
+  normalize:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    command: ["/usr/local/bin/normalize"]
+    depends_on:
+      nats: { condition: service_healthy }
+    environment:
+      NATS_URL: nats://nats:4222
+    restart: unless-stopped
+
+  detection:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    command: ["/usr/local/bin/detection"]
+    depends_on:
+      nats: { condition: service_healthy }
+    environment:
+      NATS_URL: nats://nats:4222
+      SIGMA_RULES: /sigma/rules
+    volumes:
+      - ../sigma/rules:/sigma/rules
+    restart: unless-stopped
+
+  ir-dispatcher:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    command: ["/usr/local/bin/ir-dispatcher"]
+    depends_on:
+      nats: { condition: service_healthy }
+    environment:
+      NATS_URL: nats://nats:4222
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    command: ["/usr/local/bin/api"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      nats: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    environment:
+      NATS_URL: nats://nats:4222
+      POSTGRES_DSN: postgres://edr:edr_secret@postgres:5432/edr?sslmode=disable
+      ADDR: ":8080"
+      SIGMA_RULES: /sigma/rules
+    volumes:
+      - ../sigma/rules:/sigma/rules
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ""
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api: { condition: service_healthy }
+      frontend: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  nats_data:
+  postgres_data:
+  redis_data:

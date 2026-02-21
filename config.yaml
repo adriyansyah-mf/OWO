@@ -1,35 +1,43 @@
-# Open Workstation Observer (OWO). Path: -config config.yaml or default.
+# EDR Client (OWO). Use -config config.yaml or config.production.yaml
+#
+# Production: use config.production.yaml (lower event volume, no console spam)
+# Dev/Debug: this file (or set file_watch_all_paths/process_events true for more events)
 
 agent:
-  name: ""        # default: hostname
-  hostname: ""    # default: os.Hostname()
-  group: ""       # optional, e.g. "servers"
-
-monitor:
-  execve: true         # process execution (eBPF)
-  ebpf_path: ""        # default: auto (bpf/execve.o)
-  file_events: true    # openat, unlink, rename
-  file_watch_all_paths: true  # true = all paths (noisier); false = only /etc,/usr/bin,/bin,/tmp,/dev/shm
-  network_events: true   # connect, sendto, accept (inbound); DNS = port 53
-  privilege_events: true # setuid, setgid, setreuid, setregid
-  exit_events: true      # process exit (exit_group)
-  write_events: false    # write syscall (noisy; path from /proc/pid/fd)
-  module_events: true    # kernel module load (init_module, finit_module)
-  process_events: true  # fork, clone, clone3 (syscall level; noisy)
-  gtfobins_path: "contrib/gtfobins.json"    # optional: path to local gtfobins api.json (run contrib/scripts/fetch_gtfobins.sh first)
+  name: ""
+  hostname: ""
+  group: ""
 
 output:
   file:
-    enabled: true   # write events to path; /var/log/edr is created at startup
-    path: "/var/log/edr/alerts.jsonl"
-  stderr: true    # print alerts to stderr
+    enabled: true
+    path: "/var/log/edr/events.jsonl"
+  stderr: false    # true = print events to console (dev only)
+  nats:
+    enabled: true
+    url: "nats://127.0.0.1:4222"
+    subject: "events.default"
+    tenant_id: "default"
   remote:
     enabled: false
-    address: ""   # manager host:port, e.g. "192.168.1.10:1514"
-    protocol: tcp # tcp | tls | http | https
+    address: ""
+    protocol: tcp
     http_endpoint: "/alerts"
     max_retries: 5
     retry_interval: 10
 
+monitor:
+  execve: true
+  ebpf_path: ""
+  file_events: true
+  file_watch_all_paths: false
+  network_events: true
+  privilege_events: true
+  exit_events: true
+  write_events: false
+  module_events: true
+  process_events: false
+  gtfobins_path: "contrib/gtfobins.json"
+
 logging:
-  level: warn   # debug | info | warn | error; controls which messages are printed to stderr
+  level: warn

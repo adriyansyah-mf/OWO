@@ -1,0 +1,28 @@
+title: Bash Reverse Shell
+id: proc-lnx-bash-revshell
+status: experimental
+description: Detects bash reverse shell via /dev/tcp
+author: EDR-Linux
+date: 2026/02/15
+
+logsource:
+  category: process_creation
+  product: linux
+
+detection:
+  selection:
+    Image|endswith: 'bash'
+    CommandLine|contains: '/dev/tcp/'
+
+  selection_i:
+    Image|endswith: 'bash'
+    CommandLine|contains:
+      - ' -i '
+      - '/dev/tcp'
+
+  condition: selection or selection_i
+
+level: high
+
+tags:
+  - attack.execution

@@ -19,9 +19,12 @@ import (
 	"edr-linux/pkg/edr"
 	"edr-linux/pkg/enrich"
 	"edr-linux/pkg/gtfobins"
+	"edr-linux/pkg/ir"
 	"edr-linux/pkg/logger"
 	"edr-linux/pkg/monitor"
 	"edr-linux/pkg/proc"
+
+	"github.com/nats-io/nats.go"
 )
 
 const (
@@ -131,8 +134,31 @@ func main() {
 			cfg.Agent.Group,
 		)
 	}
+	if cfg.Output.Nats.Enabled && cfg.Output.Nats.URL != "" {
+		nc, err := nats.Connect(cfg.Output.Nats.URL)
+		if err != nil {
+			logger.Warn("nats connect: %v (NATS output disabled)", err)
+		} else {
+			subj := cfg.Output.Nats.Subject
+			if subj == "" {
+				subj = "events.default"
+			}
+			tenant := cfg.Output.Nats.TenantID
+			if tenant == "" {
+				tenant = "default"
+			}
+			opts.Nats = edr.NewNatsOutput(nc, subj, tenant)
+			logger.Info("NATS output: %s (tenant=%s)", subj, tenant)
+			irListener := ir.NewListener(nc, tenant, cfg.Agent.Hostname)
+			if err := irListener.Start(); err != nil {
+				logger.Warn("ir listener: %v", err)
+			} else {
+				defer irListener.Stop()
+			}
+		}
+	}
 	var exporter *edr.Exporter
-	if opts.FilePath != "" || opts.Stderr || opts.Remote != nil {
+	if opts.FilePath != "" || opts.Stderr || opts.Remote != nil || opts.Nats != nil {
 		exporter, err = edr.NewExporter(opts)
 		if err != nil {
 			log.Fatalf("export: %v", err)
@@ -237,11 +263,15 @@ func main() {
 
 	beh := behavior.NewEngine()
 
-	fmt.Printf("OWO [%s] – exec, file, network, privilege, exit, write, module, process(fork/clone). Ctrl+C to stop.\n", cfg.Agent.Name)
-	fmt.Println("Send SIGUSR1 to print full process tree.")
-	if exporter != nil {
-		fmt.Printf("Output: file=%v stderr=%v remote=%v\n",
-			opts.FilePath != "", opts.Stderr, opts.Remote != nil)
+	if cfg.OutputStderrEnabled() {
+		fmt.Printf("OWO [%s] – exec, file, network, privilege, exit, write, module, process(fork/clone). Ctrl+C to stop.\n", cfg.Agent.Name)
+		fmt.Println("Send SIGUSR1 to print full process tree.")
+		if exporter != nil {
+			fmt.Printf("Output: file=%v stderr=%v remote=%v\n",
+				opts.FilePath != "", opts.Stderr, opts.Remote != nil)
+		}
+	} else {
+		logger.Warn("OWO [%s] started (file=%v nats=%v)", cfg.Agent.Name, opts.FilePath != "", opts.Nats != nil)
 	}
 
 	tree := make(map[uint32]*procNode)

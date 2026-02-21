@@ -1,0 +1,40 @@
+# EDR Client — Production-grade config
+# Usage: sudo ./edr-client -config config.production.yaml
+#
+# Production tuning:
+# - Noisy events OFF (process_events, file_watch_all_paths, write_events)
+# - File output for audit trail; stderr OFF (no console spam)
+# - Log level warn (minimal agent logs)
+
+agent:
+  name: "JIMBE"
+  hostname: "JIMBE"
+  group: ""
+
+output:
+  file:
+    enabled: true
+    path: "/var/log/edr/events.jsonl"
+  stderr: false          # No event stream to console (default when file/nats enabled)
+  nats:
+    enabled: true
+    url: "nats://127.0.0.1:4222"   # Agent di host sama: 127.0.0.1. Agent di mesin lain: IP server. Env NATS_URL override.
+    subject: "events.default"
+    tenant_id: "default"
+  remote:
+    enabled: false
+
+monitor:
+  execve: true
+  file_events: true
+  file_watch_all_paths: false
+  network_events: true
+  privilege_events: true
+  exit_events: true
+  write_events: false
+  module_events: true
+  process_events: false
+  gtfobins_path: "contrib/gtfobins.json"
+
+logging:
+  level: warn

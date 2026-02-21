@@ -58,6 +58,15 @@ type OutputConfig struct {
 	Stderr *bool `yaml:"stderr"`
 	// Remote sends alerts to a manager (Wazuh-style).
 	Remote RemoteOutputConfig `yaml:"remote"`
+	// NATS sends events to NATS for EDR backend pipeline.
+	Nats NatsOutputConfig `yaml:"nats"`
+}
+
+type NatsOutputConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	URL      string `yaml:"url"`       // e.g. nats://localhost:4222
+	Subject  string `yaml:"subject"`   // e.g. events.default
+	TenantID string `yaml:"tenant_id"` // default: default
 }
 
 type FileOutputConfig struct {
@@ -133,6 +142,12 @@ func Default() *Config {
 				HTTPEndpoint:        "/alerts",
 				MaxRetries:          5,
 				RetryIntervalSeconds: 10,
+			},
+			Nats: NatsOutputConfig{
+				Enabled:  false,
+				URL:      "nats://localhost:4222",
+				Subject:  "events.default",
+				TenantID: "default",
 			},
 		},
 		Logging: LoggingConfig{Level: "info"},
@@ -225,6 +240,17 @@ func (c *Config) Validate() error {
 // Normalize fills empty protocol/address defaults.
 func (c *Config) Normalize() {
 	c.ResolveAgentName()
+	// When file or NATS is enabled, default stderr to false (no console spam)
+	if (c.Output.File.Enabled && c.Output.File.Path != "") || c.Output.Nats.Enabled {
+		if c.Output.Stderr == nil {
+			falseVal := false
+			c.Output.Stderr = &falseVal
+		}
+	}
+	// Production: NATS_URL env overrides config (12-factor, Docker/k8s)
+	if u := os.Getenv("NATS_URL"); u != "" && c.Output.Nats.Enabled {
+		c.Output.Nats.URL = u
+	}
 	if c.Output.Remote.Protocol == "" {
 		c.Output.Remote.Protocol = "tcp"
 	}
