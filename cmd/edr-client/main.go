@@ -486,6 +486,9 @@ func main() {
 					if fns := gtfobinsDB.Lookup(binName); len(fns) > 0 {
 						evMap["gtfobins"] = fns
 					}
+					if mitre := gtfobinsDB.LookupMITRE(binName); len(mitre) > 0 {
+						evMap["mitre_attck"] = mitre
+					}
 				}
 				eventJSON, _ := json.Marshal(evMap)
 				_ = exporter.WriteEvent(eventJSON)

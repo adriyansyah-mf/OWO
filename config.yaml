@@ -16,7 +16,7 @@ monitor:
   write_events: false    # write syscall (noisy; path from /proc/pid/fd)
   module_events: true    # kernel module load (init_module, finit_module)
   process_events: true  # fork, clone, clone3 (syscall level; noisy)
-  gtfobins_path: ""    # optional: path to local gtfobins api.json (run contrib/scripts/fetch_gtfobins.sh first)
+  gtfobins_path: "contrib/gtfobins.json"    # optional: path to local gtfobins api.json (run contrib/scripts/fetch_gtfobins.sh first)
 
 output:
   file:
