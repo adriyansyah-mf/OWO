@@ -463,7 +463,7 @@ func main() {
 						logger.Warn("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				logger.Info("[FILE] %s pid=%d uid=%d %s %s → %s", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
+				logger.Debug("[FILE] %s pid=%d uid=%d %s %s → %s", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.Path, ev.Path2)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "file", "timestamp": time.Now().UTC(),
@@ -489,7 +489,7 @@ func main() {
 						logger.Warn("[BEHAVIOR] %s pid=%d %s", a.Rule, a.Pid, a.Detail)
 					}
 				}
-				logger.Info("[NET] %s pid=%d uid=%d %s → %s is_dns=%v", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr, ev.IsDNS)
+				logger.Debug("[NET] %s pid=%d uid=%d %s → %s is_dns=%v", ev.Type, ev.Pid, ev.Uid, ev.Comm, ev.DAddr, ev.IsDNS)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "network", "timestamp": time.Now().UTC(),
@@ -509,7 +509,7 @@ func main() {
 					logger.Warn("[PRIVILEGE] reader: %v", err)
 					return
 				}
-				logger.Info("[PRIVILEGE] %s pid=%d uid=%d→%d gid=%d→%d %s", ev.Type, ev.Pid, ev.Uid, ev.NewUid, ev.Gid, ev.NewGid, ev.Comm)
+				logger.Debug("[PRIVILEGE] %s pid=%d uid=%d→%d gid=%d→%d %s", ev.Type, ev.Pid, ev.Uid, ev.NewUid, ev.Gid, ev.NewGid, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "privilege", "timestamp": time.Now().UTC(),
@@ -529,7 +529,7 @@ func main() {
 					logger.Warn("[EXIT] reader: %v", err)
 					return
 				}
-				logger.Info("[EXIT] pid=%d uid=%d exit_code=%d %s", ev.Pid, ev.Uid, ev.ExitCode, ev.Comm)
+				logger.Debug("[EXIT] pid=%d uid=%d exit_code=%d %s", ev.Pid, ev.Uid, ev.ExitCode, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "exit", "timestamp": time.Now().UTC(),
@@ -577,7 +577,7 @@ func main() {
 						}
 					}
 				}
-				logger.Info("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
+				logger.Debug("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "write", "timestamp": time.Now().UTC(),
@@ -596,7 +596,7 @@ func main() {
 					logger.Warn("[MODULE] reader: %v", err)
 					return
 				}
-				logger.Info("[MODULE] %s pid=%d uid=%d %s", ev.Type, ev.Pid, ev.Uid, ev.Comm)
+				logger.Debug("[MODULE] %s pid=%d uid=%d %s", ev.Type, ev.Pid, ev.Uid, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "module", "timestamp": time.Now().UTC(),
@@ -615,7 +615,7 @@ func main() {
 					logger.Warn("[PROCESS] reader: %v", err)
 					return
 				}
-				logger.Info("[PROCESS] %s parent_pid=%d child_pid=%d uid=%d %s", ev.Type, ev.ParentPid, ev.ChildPid, ev.Uid, ev.Comm)
+				logger.Debug("[PROCESS] %s parent_pid=%d child_pid=%d uid=%d %s", ev.Type, ev.ParentPid, ev.ChildPid, ev.Uid, ev.Comm)
 				if exporter != nil {
 					eventJSON, _ := json.Marshal(map[string]interface{}{
 						"event_type": "process", "timestamp": time.Now().UTC(),

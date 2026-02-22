@@ -92,8 +92,7 @@ func DefaultPatterns() []Pattern {
 	}{
 		{"cc", "Credit Card", `\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b`, "high"},
 		{"ssn", "SSN", `\b\d{3}[\-]?\d{2}[\-]?\d{4}\b`, "high"},
-		{"aws_key", "AWS Access Key", `AKIA[A-Za-z0-9]{16}`, "critical"},
-		{"aws_key_loose", "AWS-like Key (potential)", `AKIA[A-Za-z0-9&]{12,24}`, "high"},
+		{"aws_key", "AWS Access Key", `AKIA[A-Za-z0-9]{10,20}`, "critical"},
 		{"aws_secret", "AWS Secret Key", `(?i)aws_secret_access_key\s*=\s*['\"]?[A-Za-z0-9/+=]{40}`, "critical"},
 		{"api_key", "Generic API Key", `(?i)(api[_-]?key|apikey)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-]{20,}`, "high"},
 		{"private_key", "Private Key", `-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----`, "critical"},
