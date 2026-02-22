@@ -77,7 +77,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     meta.breadcrumb = 'Workspace › Endpoints › Process Tree';
   }
 
-  const openScanModal = (type: 'scan' | 'deep_scan' | 'av_scan') => {
+  const openScanModal = (type: 'scan' | 'deep_scan' | 'av_scan' | 'dlp_scan') => {
     setScanModalType(type);
     setScanModalOpen(true);
   };

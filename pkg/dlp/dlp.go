@@ -3,6 +3,7 @@ package dlp
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -31,6 +32,59 @@ type Match struct {
 	Line     int    `json:"line"`
 }
 
+// PatternFromMap creates a Pattern from a map (e.g. JSON). Returns error if regex invalid.
+func PatternFromMap(m map[string]interface{}) (Pattern, error) {
+	id, _ := m["id"].(string)
+	name, _ := m["name"].(string)
+	regex, _ := m["regex"].(string)
+	sev, _ := m["severity"].(string)
+	if regex == "" {
+		_, err := regexp.Compile("")
+		return Pattern{}, err
+	}
+	if id == "" {
+		pre := regex
+		if len(pre) > 12 {
+			pre = pre[:12]
+		}
+		id = "custom_" + regexp.MustCompile(`[^a-z0-9]`).ReplaceAllString(pre, "")
+	}
+	if name == "" {
+		name = id
+	}
+	if sev == "" {
+		sev = "medium"
+	}
+	re, err := regexp.Compile(regex)
+	if err != nil {
+		return Pattern{}, err
+	}
+	return Pattern{ID: id, Name: name, Regex: regex, Severity: sev, re: re}, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// PatternsFromJSON parses JSON array of pattern maps. Invalid patterns are skipped.
+func PatternsFromJSON(data []byte) []Pattern {
+	var raw []map[string]interface{}
+	if json.Unmarshal(data, &raw) != nil {
+		return nil
+	}
+	var out []Pattern
+	for _, m := range raw {
+		p, err := PatternFromMap(m)
+		if err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // DefaultPatterns returns built-in DLP patterns.
 func DefaultPatterns() []Pattern {
 	defs := []struct {
@@ -38,7 +92,8 @@ func DefaultPatterns() []Pattern {
 	}{
 		{"cc", "Credit Card", `\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b`, "high"},
 		{"ssn", "SSN", `\b\d{3}[\-]?\d{2}[\-]?\d{4}\b`, "high"},
-		{"aws_key", "AWS Access Key", `AKIA[0-9A-Z]{16}`, "critical"},
+		{"aws_key", "AWS Access Key", `AKIA[A-Za-z0-9]{16}`, "critical"},
+		{"aws_key_loose", "AWS-like Key (potential)", `AKIA[A-Za-z0-9&]{12,24}`, "high"},
 		{"aws_secret", "AWS Secret Key", `(?i)aws_secret_access_key\s*=\s*['\"]?[A-Za-z0-9/+=]{40}`, "critical"},
 		{"api_key", "Generic API Key", `(?i)(api[_-]?key|apikey)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-]{20,}`, "high"},
 		{"private_key", "Private Key", `-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----`, "critical"},

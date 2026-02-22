@@ -128,8 +128,9 @@ func (n *NetworkMonitor) ReadNetworkEvent() (NetworkEvent, error) {
 		return ev, err
 	}
 	raw := rec.RawSample
-	if len(raw) < 60 {
-		return ev, fmt.Errorf("network event too short")
+	// network_event_t: type(1)+family(1)+dport(2)+pid(4)+tid(4)+uid(4)+saddr(4)+daddr(4)+daddr_v6(16)+comm(16)=56
+	if len(raw) < 56 {
+		return ev, fmt.Errorf("network event too short (%d < 56)", len(raw))
 	}
 	typ := raw[0]
 	family := raw[1]

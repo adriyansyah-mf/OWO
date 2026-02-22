@@ -28,6 +28,7 @@ import (
 const (
 	clamavPathsFile       = "data/clamav_paths.json"
 	dlpPathsFile          = "data/dlp_paths.json"
+	dlpPatternsFile       = "data/dlp_patterns.json"
 	deviceControlPolicyFile = "data/device_control.json"
 )
 
@@ -49,6 +50,8 @@ var (
 	clamavPathsMu   sync.RWMutex
 	dlpPaths           = []string{"/tmp", "/var/tmp", "/home"}
 	dlpPathsMu         sync.RWMutex
+	dlpPatterns        []dlp.Pattern
+	dlpPatternsMu      sync.RWMutex
 	deviceControlPolicy devicecontrol.Policy
 	deviceControlMu     sync.RWMutex
 	storePg        *store.PostgresStore
@@ -90,6 +93,16 @@ func main() {
 			dlpPaths = p
 			log.Printf("dlp paths: loaded %d from %s", len(p), dlpPathsFile)
 		}
+	}
+	// Load DLP patterns from file
+	if data, err := os.ReadFile(dlpPatternsFile); err == nil {
+		if patterns := dlp.PatternsFromJSON(data); len(patterns) > 0 {
+			dlpPatterns = patterns
+			log.Printf("dlp patterns: loaded %d from %s", len(patterns), dlpPatternsFile)
+		}
+	}
+	if len(dlpPatterns) == 0 {
+		dlpPatterns = dlp.DefaultPatterns()
 	}
 	// Load device control policy
 	if data, err := os.ReadFile(deviceControlPolicyFile); err == nil {
@@ -722,6 +735,13 @@ func handleIRDLPScan(w http.ResponseWriter, r *http.Request) {
 	} else {
 		params["paths"] = paths
 	}
+	dlpPatternsMu.RLock()
+	patMaps := make([]map[string]interface{}, len(dlpPatterns))
+	for i, p := range dlpPatterns {
+		patMaps[i] = map[string]interface{}{"id": p.ID, "name": p.Name, "regex": p.Regex, "severity": p.Severity}
+	}
+	dlpPatternsMu.RUnlock()
+	params["patterns"] = patMaps
 	cmd := map[string]interface{}{
 		"id":        "ir-" + time.Now().Format("20060102150405"),
 		"tenant_id": "default",
@@ -767,19 +787,63 @@ func handleDLPScanResults(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDLPPatterns(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", 405)
-		return
-	}
-	patterns := dlp.DefaultPatterns()
-	out := make([]map[string]interface{}, len(patterns))
-	for i, p := range patterns {
-		out[i] = map[string]interface{}{
-			"id": p.ID, "name": p.Name, "regex": p.Regex, "severity": p.Severity,
+	switch r.Method {
+	case http.MethodGet:
+		dlpPatternsMu.RLock()
+		p := make([]dlp.Pattern, len(dlpPatterns))
+		copy(p, dlpPatterns)
+		dlpPatternsMu.RUnlock()
+		out := make([]map[string]interface{}, len(p))
+		for i, x := range p {
+			out[i] = map[string]interface{}{"id": x.ID, "name": x.Name, "regex": x.Regex, "severity": x.Severity}
 		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
+	case http.MethodPut:
+		var raw []map[string]interface{}
+		if json.NewDecoder(r.Body).Decode(&raw) != nil {
+			http.Error(w, "invalid body: expected JSON array of patterns", 400)
+			return
+		}
+		var patterns []dlp.Pattern
+		for _, m := range raw {
+			regex, _ := m["regex"].(string)
+			if strings.TrimSpace(regex) == "" {
+				continue
+			}
+			id, _ := m["id"].(string)
+			name, _ := m["name"].(string)
+			p, err := dlp.PatternFromMap(m)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("invalid regex in pattern %q (id=%s): %v", name, id, err), 400)
+				return
+			}
+			patterns = append(patterns, p)
+		}
+		if len(patterns) == 0 {
+			patterns = dlp.DefaultPatterns()
+		}
+		dlpPatternsMu.Lock()
+		dlpPatterns = patterns
+		dlpPatternsMu.Unlock()
+		if err := os.MkdirAll(filepath.Dir(dlpPatternsFile), 0755); err == nil {
+			out := make([]map[string]interface{}, len(patterns))
+			for i, p := range patterns {
+				out[i] = map[string]interface{}{"id": p.ID, "name": p.Name, "regex": p.Regex, "severity": p.Severity}
+			}
+			if b, err := json.Marshal(out); err == nil {
+				_ = os.WriteFile(dlpPatternsFile, b, 0644)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		res := make([]map[string]interface{}, len(patterns))
+		for i, p := range patterns {
+			res[i] = map[string]interface{}{"id": p.ID, "name": p.Name, "regex": p.Regex, "severity": p.Severity}
+		}
+		json.NewEncoder(w).Encode(res)
+	default:
+		http.Error(w, "method not allowed", 405)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
 }
 
 func handleDLPPaths(w http.ResponseWriter, r *http.Request) {

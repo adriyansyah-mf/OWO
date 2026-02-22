@@ -394,6 +394,33 @@ body {
 
 .card-subtitle { font-size: 12px; color: var(--text-muted); }
 
+/* Form inputs in cards - dark theme */
+.card input,
+.card select,
+.card textarea,
+.content input,
+.content select,
+.content textarea {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.card input::placeholder,
+.card textarea::placeholder,
+.content input::placeholder,
+.content textarea::placeholder {
+  color: var(--text-muted);
+}
+.card input:focus,
+.card select:focus,
+.card textarea:focus,
+.content input:focus,
+.content select:focus,
+.content textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .status-pill {
   font-size: 11px;
   font-weight: 600;

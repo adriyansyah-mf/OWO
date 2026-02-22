@@ -413,6 +413,19 @@ func main() {
 					}
 				}
 				scanner := dlp.NewScanner()
+				if pats, ok := params["patterns"].([]interface{}); ok && len(pats) > 0 {
+					var custom []dlp.Pattern
+					for _, v := range pats {
+						if m, ok := v.(map[string]interface{}); ok {
+							if p, err := dlp.PatternFromMap(m); err == nil {
+								custom = append(custom, p)
+							}
+						}
+					}
+					if len(custom) > 0 {
+						scanner.SetPatterns(custom)
+					}
+				}
 				matches := scanner.ScanPaths(paths)
 				payload := map[string]interface{}{
 					"host_id":   cfg.Agent.Hostname,
