@@ -16,7 +16,10 @@ import (
 	"unicode/utf8"
 
 	"edr-linux/pkg/behavior"
+	"edr-linux/pkg/clamav"
 	"edr-linux/pkg/config"
+	"edr-linux/pkg/devicecontrol"
+	"edr-linux/pkg/dlp"
 	"edr-linux/pkg/detection"
 	"edr-linux/pkg/edr"
 	"edr-linux/pkg/enrich"
@@ -150,11 +153,15 @@ func main() {
 			cfg.Agent.Group,
 		)
 	}
+	var irListener *ir.Listener
+	var natsConn *nats.Conn
+	deviceControlChecker := devicecontrol.NewChecker()
 	if cfg.Output.Nats.Enabled && cfg.Output.Nats.URL != "" {
 		nc, err := nats.Connect(cfg.Output.Nats.URL)
 		if err != nil {
 			logger.Warn("nats connect: %v (NATS output disabled)", err)
 		} else {
+			natsConn = nc
 			subj := cfg.Output.Nats.Subject
 			if subj == "" {
 				subj = "events.default"
@@ -165,11 +172,26 @@ func main() {
 			}
 			opts.Nats = edr.NewNatsOutput(nc, subj, tenant)
 			logger.Info("NATS output: %s (tenant=%s)", subj, tenant)
-			irListener := ir.NewListener(nc, tenant, cfg.Agent.Hostname)
+			irListener = ir.NewListener(nc, tenant, cfg.Agent.Hostname)
 			if err := irListener.Start(); err != nil {
 				logger.Warn("ir listener: %v", err)
 			} else {
 				defer irListener.Stop()
+			}
+			nc.Subscribe("device_control.policy", func(m *nats.Msg) {
+				var p devicecontrol.Policy
+				if json.Unmarshal(m.Data, &p) == nil {
+					deviceControlChecker.SetPolicy(p)
+					logger.Info("device control: policy updated (enabled=%v)", p.Enabled)
+				}
+			})
+			// Request current policy on startup (in case we connected after API)
+			if resp, err := nc.Request("device_control.request", nil, 2*time.Second); err == nil {
+				var p devicecontrol.Policy
+				if json.Unmarshal(resp.Data, &p) == nil {
+					deviceControlChecker.SetPolicy(p)
+					logger.Info("device control: policy loaded (enabled=%v)", p.Enabled)
+				}
 			}
 		}
 	}
@@ -296,50 +318,122 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 	signal.Notify(treeDump, syscall.SIGUSR1)
 
-	// Periodic process snapshot (ps aux style) — replaces per-execve storage
+	// Periodic process snapshot (ps aux style) — replaces per-execve storage.
+	// scanTrigger: on-demand snapshot when IR scan/deep_scan command received.
+	sendProcessSnapshot := func() {
+		if exporter == nil {
+			return
+		}
+		procs := proc.ListAllProcesses()
+		if len(procs) == 0 {
+			return
+		}
+		procMaps := make([]map[string]interface{}, 0, len(procs))
+		for _, p := range procs {
+			m := map[string]interface{}{
+				"pid": p.Pid, "ppid": p.Ppid, "exe": p.Exe, "cmdline": p.Cmdline,
+				"uid": p.Uid, "gid": p.Gid, "comm": p.Comm,
+			}
+			if gtfobinsDB != nil {
+				binName := gtfobins.BinaryNameFromPath(p.Exe)
+				if binName == "" {
+					binName = p.Comm
+				}
+				if fns := gtfobinsDB.Lookup(binName); len(fns) > 0 {
+					m["gtfobins"] = fns
+				}
+				if mitre := gtfobinsDB.LookupMITRE(binName); len(mitre) > 0 {
+					m["mitre"] = mitre
+				}
+			}
+			procMaps = append(procMaps, m)
+		}
+		evMap := map[string]interface{}{
+			"event_type": "process_snapshot",
+			"timestamp":  time.Now().UTC(),
+			"processes":  procMaps,
+		}
+		eventJSON, _ := json.Marshal(evMap)
+		_ = exporter.WriteEvent(eventJSON, false)
+	}
 	interval := cfg.Monitor.ProcessSnapshotIntervalSeconds
 	if interval <= 0 {
 		interval = 60 // default
 	}
 	if exporter != nil && opts.Nats != nil {
+		if irListener != nil {
+			irListener.SetOnScan(sendProcessSnapshot)
+			irListener.SetOnDeepScan(func() {
+				sendProcessSnapshot()
+				// triage (tar) is done by ir package after onDeepScan returns
+			})
+			irListener.SetOnAVScan(func(params map[string]interface{}) {
+				if !clamav.EnsureInstalled() {
+					logger.Warn("clamav: install failed, av_scan skipped")
+					return
+				}
+				paths := cfg.Monitor.ClamAVScanPaths
+				if len(paths) == 0 {
+					paths = []string{"/tmp", "/var/tmp", "/home"}
+				}
+				if p, ok := params["paths"].([]interface{}); ok && len(p) > 0 {
+					paths = make([]string, 0, len(p))
+					for _, v := range p {
+						if s, ok := v.(string); ok && s != "" {
+							paths = append(paths, s)
+						}
+					}
+				}
+				results, err := clamav.RunScan(paths)
+				if err != nil {
+					logger.Warn("clamav scan: %v", err)
+				}
+				payload := map[string]interface{}{
+					"host_id":   cfg.Agent.Hostname,
+					"tenant_id": "default",
+					"results":   results,
+					"timestamp": time.Now().UTC(),
+				}
+				b, _ := json.Marshal(payload)
+				if natsConn != nil {
+					_ = natsConn.Publish("av.scan_results", b)
+				}
+			})
+			irListener.SetOnDLPScan(func(params map[string]interface{}) {
+				paths := cfg.Monitor.DLPScanPaths
+				if len(paths) == 0 {
+					paths = []string{"/tmp", "/var/tmp", "/home"}
+				}
+				if p, ok := params["paths"].([]interface{}); ok && len(p) > 0 {
+					paths = make([]string, 0, len(p))
+					for _, v := range p {
+						if s, ok := v.(string); ok && s != "" {
+							paths = append(paths, s)
+						}
+					}
+				}
+				scanner := dlp.NewScanner()
+				matches := scanner.ScanPaths(paths)
+				payload := map[string]interface{}{
+					"host_id":   cfg.Agent.Hostname,
+					"tenant_id": "default",
+					"matches":   matches,
+					"timestamp": time.Now().UTC(),
+				}
+				b, _ := json.Marshal(payload)
+				if natsConn != nil {
+					_ = natsConn.Publish("dlp.scan_results", b)
+				}
+			})
+		}
 		go func() {
 			ticker := time.NewTicker(time.Duration(interval) * time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				procs := proc.ListAllProcesses()
-				if len(procs) == 0 {
-					continue
-				}
-				procMaps := make([]map[string]interface{}, 0, len(procs))
-				for _, p := range procs {
-					m := map[string]interface{}{
-						"pid": p.Pid, "ppid": p.Ppid, "exe": p.Exe, "cmdline": p.Cmdline,
-						"uid": p.Uid, "gid": p.Gid, "comm": p.Comm,
-					}
-					if gtfobinsDB != nil {
-						binName := gtfobins.BinaryNameFromPath(p.Exe)
-						if binName == "" {
-							binName = p.Comm
-						}
-						if fns := gtfobinsDB.Lookup(binName); len(fns) > 0 {
-							m["gtfobins"] = fns
-						}
-						if mitre := gtfobinsDB.LookupMITRE(binName); len(mitre) > 0 {
-							m["mitre"] = mitre
-						}
-					}
-					procMaps = append(procMaps, m)
-				}
-				evMap := map[string]interface{}{
-					"event_type": "process_snapshot",
-					"timestamp":  time.Now().UTC(),
-					"processes":  procMaps,
-				}
-				eventJSON, _ := json.Marshal(evMap)
-				_ = exporter.WriteEvent(eventJSON, false)
+				sendProcessSnapshot()
 			}
 		}()
-		logger.Info("process snapshot: every %ds", interval)
+		logger.Info("process snapshot: every %ds (scan/deep_scan via IR)", interval)
 	}
 
 	if fileMon != nil {
@@ -440,6 +534,35 @@ func main() {
 				if err != nil {
 					logger.Warn("[WRITE] reader: %v", err)
 					return
+				}
+				path := ev.Path
+				if path != "" && path != "-" {
+					if allowed, reason := deviceControlChecker.Check(path); !allowed {
+						logger.Warn("[DEVICE_CONTROL] blocked pid=%d path=%s %s: %s", ev.Pid, path, ev.Comm, reason)
+						if natsConn != nil {
+							tenant := cfg.Output.Nats.TenantID
+							if tenant == "" {
+								tenant = "default"
+							}
+							alertJSON, _ := json.Marshal(map[string]interface{}{
+								"id":         "alt-" + strconv.FormatInt(time.Now().Unix(), 10),
+								"tenant_id":  tenant,
+								"host_id":    cfg.Agent.Hostname,
+								"rule_id":    "device_control_violation",
+								"rule_name":  "Device Control Violation",
+								"severity":   "high",
+								"title":      "Device Control Violation",
+								"message":    reason,
+								"event_json": map[string]interface{}{
+									"event_type": "device_control_violation",
+									"pid":        ev.Pid, "tid": ev.Tid, "uid": ev.Uid,
+									"path": path, "comm": ev.Comm, "reason": reason,
+								},
+								"created_at": time.Now().UTC(),
+							})
+							_ = natsConn.Publish("alerts", alertJSON)
+						}
+					}
 				}
 				logger.Info("[WRITE] pid=%d fd=%d count=%d path=%s %s", ev.Pid, ev.Fd, ev.Count, ev.Path, ev.Comm)
 				if exporter != nil {
@@ -550,6 +673,38 @@ func main() {
 			enrichPath := path
 			if enrichPath == "" || enrichPath == "-" {
 				enrichPath = exe
+			}
+			// Real-time malware scan on execve (configurable)
+			if cfg.MonitorRealtimeAVScanEnabled() && enrichPath != "" && enrichPath != "-" {
+				go func(p string, pid uint32, c string) {
+					if !clamav.EnsureInstalled() {
+						return
+					}
+					infected, virus, _ := clamav.ScanFile(p)
+					if infected && natsConn != nil {
+						tenant := cfg.Output.Nats.TenantID
+						if tenant == "" {
+							tenant = "default"
+						}
+						alertJSON, _ := json.Marshal(map[string]interface{}{
+							"id":         "alt-" + strconv.FormatInt(time.Now().UnixNano()/1e6, 10),
+							"tenant_id":  tenant,
+							"host_id":    cfg.Agent.Hostname,
+							"rule_id":    "malware_detected",
+							"rule_name":  "Malware Detected (Real-time)",
+							"severity":   "critical",
+							"title":      "Malware Detected",
+							"message":    "Executable infected: " + virus,
+							"event_json": map[string]interface{}{
+								"event_type": "malware_detected",
+								"path":       p, "virus": virus, "pid": pid, "comm": c,
+							},
+							"created_at": time.Now().UTC(),
+						})
+						_ = natsConn.Publish("alerts", alertJSON)
+						logger.Warn("[MALWARE] %s pid=%d %s: %s", p, pid, c, virus)
+					}
+				}(enrichPath, ev.Pid, comm)
 			}
 			enrichCtx := enrich.EnrichExec(enrichPath, ev.Pid)
 			enrichCtx.LoadTime = ts.UnixNano()

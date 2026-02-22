@@ -28,6 +28,9 @@ monitor:
   process_snapshot_interval: 60   # periodic ps aux (no per-execve storage)
   execve: true
   sigma_rules_path: "sigma/rules"   # hanya execve yg match Sigma rules tampil di stdout
+  clamav_scan_paths: ["/tmp", "/var/tmp", "/home"]
+  realtime_av_scan: false   # path untuk AV scan
+  dlp_scan_paths: ["/tmp", "/var/tmp", "/home"]     # path untuk DLP scan
   file_events: true
   file_watch_all_paths: false
   network_events: true

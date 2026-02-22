@@ -12,20 +12,45 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// OnScanFunc is called when scan or deep_scan command is received.
+type OnScanFunc func()
+
+// OnAVScanFunc is called when av_scan command is received. Params may contain "paths" ([]interface{}).
+type OnAVScanFunc func(params map[string]interface{})
+
+// OnDLPScanFunc is called when dlp_scan command is received. Params may contain "paths" ([]interface{}).
+type OnDLPScanFunc func(params map[string]interface{})
+
 // Listener subscribes to IR commands and executes them.
 type Listener struct {
-	nc       *nats.Conn
-	tenantID string
-	hostID   string
-	sub      *nats.Subscription
-	mu       sync.Mutex
-	isolated bool
+	nc         *nats.Conn
+	tenantID   string
+	hostID     string
+	sub        *nats.Subscription
+	mu         sync.Mutex
+	isolated   bool
+	onScan     OnScanFunc    // optional: trigger process snapshot
+	onDeepScan OnScanFunc    // optional: scan + triage
+	onAVScan   OnAVScanFunc  // optional: ClamAV scan
+	onDLPScan  OnDLPScanFunc // optional: DLP content scan
 }
 
 // NewListener creates an IR listener.
 func NewListener(nc *nats.Conn, tenantID, hostID string) *Listener {
 	return &Listener{nc: nc, tenantID: tenantID, hostID: hostID}
 }
+
+// SetOnScan sets callback for scan command (immediate process snapshot).
+func (l *Listener) SetOnScan(f OnScanFunc) { l.onScan = f }
+
+// SetOnDeepScan sets callback for deep_scan (scan + triage).
+func (l *Listener) SetOnDeepScan(f OnScanFunc) { l.onDeepScan = f }
+
+// SetOnAVScan sets callback for av_scan (ClamAV).
+func (l *Listener) SetOnAVScan(f OnAVScanFunc) { l.onAVScan = f }
+
+// SetOnDLPScan sets callback for dlp_scan (DLP).
+func (l *Listener) SetOnDLPScan(f OnDLPScanFunc) { l.onDLPScan = f }
 
 // Start subscribes to ir.{tenant}.{host} and handles commands.
 func (l *Listener) Start() error {
@@ -64,6 +89,35 @@ func (l *Listener) execute(action string, params map[string]interface{}) {
 		l.killProcess(params)
 	case "collect_triage":
 		l.collectTriage(params)
+	case "scan":
+		if l.onScan != nil {
+			l.onScan()
+			log.Println("ir: scan completed (process snapshot sent)")
+		} else {
+			log.Println("ir: scan requested but no handler set")
+		}
+	case "deep_scan":
+		if l.onDeepScan != nil {
+			l.onDeepScan()
+		} else if l.onScan != nil {
+			l.onScan()
+		}
+		l.collectTriage(map[string]interface{}{"paths": []interface{}{"/tmp", "/var/log", "/etc"}, "artifact_name": "deep_scan"})
+		log.Println("ir: deep_scan completed (snapshot + triage)")
+	case "av_scan":
+		if l.onAVScan != nil {
+			l.onAVScan(params)
+			log.Println("ir: av_scan completed")
+		} else {
+			log.Println("ir: av_scan requested but no handler set")
+		}
+	case "dlp_scan":
+		if l.onDLPScan != nil {
+			l.onDLPScan(params)
+			log.Println("ir: dlp_scan completed")
+		} else {
+			log.Println("ir: dlp_scan requested but no handler set")
+		}
 	default:
 		log.Printf("ir: unknown action %s", action)
 	}

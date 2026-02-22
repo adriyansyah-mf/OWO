@@ -6,19 +6,29 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"edr-linux/pkg/devicecontrol"
+	"edr-linux/pkg/dlp"
 	"edr-linux/pkg/store"
 	"edr-linux/pkg/sigma"
 
 	"github.com/nats-io/nats.go"
+)
+
+const (
+	clamavPathsFile       = "data/clamav_paths.json"
+	dlpPathsFile          = "data/dlp_paths.json"
+	deviceControlPolicyFile = "data/device_control.json"
 )
 
 const (
@@ -27,12 +37,24 @@ const (
 )
 
 var (
-	alertsMem   []map[string]interface{}
-	alertsMu    sync.RWMutex
-	storePg     *store.PostgresStore
-	nc          *nats.Conn
-	validTokens = make(map[string]time.Time)
-	tokensMu    sync.RWMutex
+	alertsMem        []map[string]interface{}
+	alertsMu         sync.RWMutex
+	alertStreamChans []chan []byte
+	alertStreamMu    sync.RWMutex
+	avScanResults    []map[string]interface{}
+	avScanMu        sync.RWMutex
+	dlpScanResults  []map[string]interface{}
+	dlpScanMu       sync.RWMutex
+	clamavPaths     = []string{"/tmp", "/var/tmp", "/home"}
+	clamavPathsMu   sync.RWMutex
+	dlpPaths           = []string{"/tmp", "/var/tmp", "/home"}
+	dlpPathsMu         sync.RWMutex
+	deviceControlPolicy devicecontrol.Policy
+	deviceControlMu     sync.RWMutex
+	storePg        *store.PostgresStore
+	nc             *nats.Conn
+	validTokens    = make(map[string]time.Time)
+	tokensMu       sync.RWMutex
 )
 
 func main() {
@@ -53,6 +75,33 @@ func main() {
 		}
 	}
 
+	// Load ClamAV paths from file
+	if data, err := os.ReadFile(clamavPathsFile); err == nil {
+		var p []string
+		if json.Unmarshal(data, &p) == nil && len(p) > 0 {
+			clamavPaths = p
+			log.Printf("clamav paths: loaded %d from %s", len(p), clamavPathsFile)
+		}
+	}
+	// Load DLP paths from file
+	if data, err := os.ReadFile(dlpPathsFile); err == nil {
+		var p []string
+		if json.Unmarshal(data, &p) == nil && len(p) > 0 {
+			dlpPaths = p
+			log.Printf("dlp paths: loaded %d from %s", len(p), dlpPathsFile)
+		}
+	}
+	// Load device control policy
+	if data, err := os.ReadFile(deviceControlPolicyFile); err == nil {
+		var p devicecontrol.Policy
+		if json.Unmarshal(data, &p) == nil {
+			deviceControlPolicy = p
+			log.Printf("device control: loaded from %s (enabled=%v)", deviceControlPolicyFile, p.Enabled)
+		}
+	} else {
+		deviceControlPolicy = devicecontrol.DefaultPolicy()
+	}
+
 	nc, err = nats.Connect(natsURL)
 	if err != nil {
 		log.Printf("nats connect: %v (API will run without NATS)", err)
@@ -71,6 +120,7 @@ func main() {
 				alertsMem = alertsMem[len(alertsMem)-1000:]
 			}
 			alertsMu.Unlock()
+			broadcastAlert(a)
 			if storePg != nil {
 				hid, _ := a["host_id"].(string)
 				tid, _ := a["tenant_id"].(string)
@@ -90,6 +140,82 @@ func main() {
 				}
 			}
 		})
+		nc.Subscribe("av.scan_results", func(m *nats.Msg) {
+			var a map[string]interface{}
+			if json.Unmarshal(m.Data, &a) != nil {
+				return
+			}
+			avScanMu.Lock()
+			avScanResults = append(avScanResults, a)
+			if len(avScanResults) > 200 {
+				avScanResults = avScanResults[len(avScanResults)-200:]
+			}
+			avScanMu.Unlock()
+			// Publish malware findings to alerts for web UI notification
+			if results, ok := a["results"].([]interface{}); ok {
+				hostID, _ := a["host_id"].(string)
+				tenantID, _ := a["tenant_id"].(string)
+				if tenantID == "" {
+					tenantID = "default"
+				}
+				for _, r := range results {
+					rm, _ := r.(map[string]interface{})
+					if status, _ := rm["status"].(string); status == "infected" {
+						path, _ := rm["path"].(string)
+						virus, _ := rm["virus"].(string)
+						alert := map[string]interface{}{
+							"id":         "alt-" + fmt.Sprintf("%d", time.Now().UnixNano()/1e6),
+							"tenant_id":  tenantID,
+							"host_id":    hostID,
+							"rule_id":    "malware_detected",
+							"rule_name":  "Malware Detected (AV Scan)",
+							"severity":   "critical",
+							"title":      "Malware Detected",
+							"message":    path + ": " + virus,
+							"event_json": map[string]interface{}{"path": path, "virus": virus},
+							"created_at": time.Now().UTC(),
+						}
+						alertsMu.Lock()
+						alertsMem = append(alertsMem, alert)
+						if len(alertsMem) > 1000 {
+							alertsMem = alertsMem[len(alertsMem)-1000:]
+						}
+						alertsMu.Unlock()
+						if storePg != nil && hostID != "" {
+							bg := context.Background()
+							storePg.UpsertHost(bg, tenantID, hostID, hostID, "")
+							storePg.InsertAlert(bg, tenantID, hostID, "malware_detected", "critical", "Malware Detected", path+": "+virus, map[string]interface{}{"path": path, "virus": virus}, nil)
+							storePg.ComputeAndUpdateRiskScore(bg, hostID)
+						}
+						broadcastAlert(alert)
+					}
+				}
+			}
+		})
+		// Publish device control policy on startup and when agents request it
+		if b, err := json.Marshal(deviceControlPolicy); err == nil {
+			nc.Publish("device_control.policy", b)
+		}
+		nc.Subscribe("device_control.request", func(m *nats.Msg) {
+			deviceControlMu.RLock()
+			p := deviceControlPolicy
+			deviceControlMu.RUnlock()
+			if b, err := json.Marshal(p); err == nil {
+				m.Respond(b)
+			}
+		})
+		nc.Subscribe("dlp.scan_results", func(m *nats.Msg) {
+			var a map[string]interface{}
+			if json.Unmarshal(m.Data, &a) != nil {
+				return
+			}
+			dlpScanMu.Lock()
+			dlpScanResults = append(dlpScanResults, a)
+			if len(dlpScanResults) > 200 {
+				dlpScanResults = dlpScanResults[len(dlpScanResults)-200:]
+			}
+			dlpScanMu.Unlock()
+		})
 	}
 
 	mux := http.NewServeMux()
@@ -97,12 +223,23 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/logout", cors(handleLogout))
 	mux.HandleFunc("/api/v1/health", cors(handleHealth))
 	mux.HandleFunc("/api/v1/alerts", cors(authRequired(handleAlerts)))
+	mux.HandleFunc("/api/v1/alerts/stream", cors(authRequired(handleAlertsStream)))
 	mux.HandleFunc("/api/v1/hosts", cors(authRequired(handleHosts)))
 	mux.HandleFunc("/api/v1/hosts/", cors(authRequired(handleHostByID)))
 	mux.HandleFunc("/api/v1/ir/isolate", cors(authRequired(handleIRIsolate)))
 	mux.HandleFunc("/api/v1/ir/release", cors(authRequired(handleIRRelease)))
 	mux.HandleFunc("/api/v1/ir/kill", cors(authRequired(handleIRKill)))
 	mux.HandleFunc("/api/v1/ir/collect", cors(authRequired(handleIRCollect)))
+	mux.HandleFunc("/api/v1/ir/scan", cors(authRequired(handleIRScan)))
+	mux.HandleFunc("/api/v1/ir/deep-scan", cors(authRequired(handleIRDeepScan)))
+	mux.HandleFunc("/api/v1/ir/av-scan", cors(authRequired(handleIRAVScan)))
+	mux.HandleFunc("/api/v1/ir/dlp-scan", cors(authRequired(handleIRDLPScan)))
+	mux.HandleFunc("/api/v1/av-scan-results", cors(authRequired(handleAVScanResults)))
+	mux.HandleFunc("/api/v1/dlp-scan-results", cors(authRequired(handleDLPScanResults)))
+	mux.HandleFunc("/api/v1/settings/clamav-paths", cors(authRequired(handleClamAVPaths)))
+	mux.HandleFunc("/api/v1/settings/dlp-paths", cors(authRequired(handleDLPPaths)))
+	mux.HandleFunc("/api/v1/dlp/patterns", cors(authRequired(handleDLPPatterns)))
+	mux.HandleFunc("/api/v1/policies/device-control", cors(authRequired(handleDeviceControlPolicy)))
 	mux.HandleFunc("/api/v1/rules", cors(authRequired(handleRulesList)))
 	mux.HandleFunc("/api/v1/rules/", cors(authRequired(handleRulesByID)))
 	mux.HandleFunc("/api/v1/test/inject-event", cors(authRequired(handleTestInjectEvent)))
@@ -158,14 +295,18 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func authRequired(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if len(auth) < 8 || auth[:7] != "Bearer " {
+		token := ""
+		if auth := r.Header.Get("Authorization"); len(auth) >= 8 && auth[:7] == "Bearer " {
+			token = auth[7:]
+		} else if t := r.URL.Query().Get("token"); t != "" {
+			token = t
+		}
+		if token == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(401)
 			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
-		token := auth[7:]
 		tokensMu.RLock()
 		exp, ok := validTokens[token]
 		tokensMu.RUnlock()
@@ -187,6 +328,63 @@ func authRequired(h http.HandlerFunc) http.HandlerFunc {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
+}
+
+func broadcastAlert(a map[string]interface{}) {
+	b, err := json.Marshal(a)
+	if err != nil {
+		return
+	}
+	alertStreamMu.RLock()
+	chans := make([]chan []byte, len(alertStreamChans))
+	copy(chans, alertStreamChans)
+	alertStreamMu.RUnlock()
+	for _, ch := range chans {
+		select {
+		case ch <- b:
+		default:
+			// client slow, skip
+		}
+	}
+}
+
+func handleAlertsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	ch := make(chan []byte, 8)
+	alertStreamMu.Lock()
+	alertStreamChans = append(alertStreamChans, ch)
+	alertStreamMu.Unlock()
+	defer func() {
+		alertStreamMu.Lock()
+		for i, c := range alertStreamChans {
+			if c == ch {
+				alertStreamChans = append(alertStreamChans[:i], alertStreamChans[i+1:]...)
+				break
+			}
+		}
+		alertStreamMu.Unlock()
+		close(ch)
+	}()
+	flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 func handleAlerts(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +586,338 @@ func handleIRRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cmd)
+}
+
+func handleIRScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		HostID string `json:"host_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.HostID == "" {
+		http.Error(w, "host_id required", 400)
+		return
+	}
+	cmd := map[string]interface{}{
+		"id":        "ir-" + time.Now().Format("20060102150405"),
+		"tenant_id": "default",
+		"host_id":   body.HostID,
+		"action":    "scan",
+		"params":    map[string]interface{}{},
+		"status":    "pending",
+	}
+	b, _ := json.Marshal(cmd)
+	go func() {
+		if storePg != nil {
+			storePg.InsertIRAction(context.Background(), "default", body.HostID, "scan", map[string]interface{}{}, "")
+		}
+		if nc != nil {
+			nc.Publish("ir.commands", b)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cmd)
+}
+
+func handleIRDeepScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		HostID string `json:"host_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.HostID == "" {
+		http.Error(w, "host_id required", 400)
+		return
+	}
+	cmd := map[string]interface{}{
+		"id":        "ir-" + time.Now().Format("20060102150405"),
+		"tenant_id": "default",
+		"host_id":   body.HostID,
+		"action":    "deep_scan",
+		"params":    map[string]interface{}{},
+		"status":    "pending",
+	}
+	b, _ := json.Marshal(cmd)
+	go func() {
+		if storePg != nil {
+			storePg.InsertIRAction(context.Background(), "default", body.HostID, "deep_scan", map[string]interface{}{}, "")
+		}
+		if nc != nil {
+			nc.Publish("ir.commands", b)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cmd)
+}
+
+func handleIRAVScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		HostID string   `json:"host_id"`
+		Paths  []string `json:"paths"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.HostID == "" {
+		http.Error(w, "host_id required", 400)
+		return
+	}
+	params := map[string]interface{}{}
+	clamavPathsMu.RLock()
+	paths := clamavPaths
+	clamavPathsMu.RUnlock()
+	if len(body.Paths) > 0 {
+		paths = body.Paths
+		params["paths"] = body.Paths
+	} else {
+		params["paths"] = paths
+	}
+	cmd := map[string]interface{}{
+		"id":        "ir-" + time.Now().Format("20060102150405"),
+		"tenant_id": "default",
+		"host_id":   body.HostID,
+		"action":    "av_scan",
+		"params":    params,
+		"status":    "pending",
+	}
+	b, _ := json.Marshal(cmd)
+	// Lempar ke background: jangan block response
+	go func() {
+		if storePg != nil {
+			storePg.InsertIRAction(context.Background(), "default", body.HostID, "av_scan", params, "")
+		}
+		if nc != nil {
+			nc.Publish("ir.commands", b)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cmd)
+}
+
+func handleIRDLPScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var body struct {
+		HostID string   `json:"host_id"`
+		Paths  []string `json:"paths"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.HostID == "" {
+		http.Error(w, "host_id required", 400)
+		return
+	}
+	params := map[string]interface{}{}
+	dlpPathsMu.RLock()
+	paths := dlpPaths
+	dlpPathsMu.RUnlock()
+	if len(body.Paths) > 0 {
+		paths = body.Paths
+		params["paths"] = body.Paths
+	} else {
+		params["paths"] = paths
+	}
+	cmd := map[string]interface{}{
+		"id":        "ir-" + time.Now().Format("20060102150405"),
+		"tenant_id": "default",
+		"host_id":   body.HostID,
+		"action":    "dlp_scan",
+		"params":    params,
+		"status":    "pending",
+	}
+	b, _ := json.Marshal(cmd)
+	go func() {
+		if storePg != nil {
+			storePg.InsertIRAction(context.Background(), "default", body.HostID, "dlp_scan", params, "")
+		}
+		if nc != nil {
+			nc.Publish("ir.commands", b)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cmd)
+}
+
+func handleDLPScanResults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	hostID := r.URL.Query().Get("host_id")
+	dlpScanMu.RLock()
+	out := make([]map[string]interface{}, len(dlpScanResults))
+	copy(out, dlpScanResults)
+	dlpScanMu.RUnlock()
+	if hostID != "" {
+		filtered := make([]map[string]interface{}, 0)
+		for _, a := range out {
+			if h, _ := a["host_id"].(string); h == hostID {
+				filtered = append(filtered, a)
+			}
+		}
+		out = filtered
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func handleDLPPatterns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	patterns := dlp.DefaultPatterns()
+	out := make([]map[string]interface{}, len(patterns))
+	for i, p := range patterns {
+		out[i] = map[string]interface{}{
+			"id": p.ID, "name": p.Name, "regex": p.Regex, "severity": p.Severity,
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func handleDLPPaths(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		dlpPathsMu.RLock()
+		p := make([]string, len(dlpPaths))
+		copy(p, dlpPaths)
+		dlpPathsMu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	case http.MethodPut:
+		var p []string
+		if json.NewDecoder(r.Body).Decode(&p) != nil {
+			http.Error(w, "invalid body", 400)
+			return
+		}
+		var valid []string
+		for _, s := range p {
+			s = filepath.Clean(s)
+			if s != "" && strings.HasPrefix(s, "/") && !strings.Contains(s, "..") {
+				valid = append(valid, s)
+			}
+		}
+		dlpPathsMu.Lock()
+		dlpPaths = valid
+		dlpPathsMu.Unlock()
+		if err := os.MkdirAll(filepath.Dir(dlpPathsFile), 0755); err == nil {
+			if b, err := json.Marshal(valid); err == nil {
+				_ = os.WriteFile(dlpPathsFile, b, 0644)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(valid)
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+func handleDeviceControlPolicy(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		deviceControlMu.RLock()
+		p := deviceControlPolicy
+		deviceControlMu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	case http.MethodPut:
+		var p devicecontrol.Policy
+		if json.NewDecoder(r.Body).Decode(&p) != nil {
+			http.Error(w, "invalid body", 400)
+			return
+		}
+		if p.Mode != "allow" && p.Mode != "block" && p.Mode != "whitelist" && p.Mode != "blacklist" {
+			p.Mode = "allow"
+		}
+		if len(p.RemovablePaths) == 0 {
+			p.RemovablePaths = devicecontrol.DefaultPolicy().RemovablePaths
+		}
+		deviceControlMu.Lock()
+		deviceControlPolicy = p
+		deviceControlMu.Unlock()
+		if err := os.MkdirAll(filepath.Dir(deviceControlPolicyFile), 0755); err == nil {
+			if b, err := json.Marshal(p); err == nil {
+				_ = os.WriteFile(deviceControlPolicyFile, b, 0644)
+			}
+		}
+		if nc != nil {
+			if b, err := json.Marshal(p); err == nil {
+				nc.Publish("device_control.policy", b)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+func handleClamAVPaths(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		clamavPathsMu.RLock()
+		p := make([]string, len(clamavPaths))
+		copy(p, clamavPaths)
+		clamavPathsMu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	case http.MethodPut:
+		var p []string
+		if json.NewDecoder(r.Body).Decode(&p) != nil {
+			http.Error(w, "invalid body", 400)
+			return
+		}
+		// Validate: absolute paths only, no traversal
+		var valid []string
+		for _, s := range p {
+			s = filepath.Clean(s)
+			if s != "" && strings.HasPrefix(s, "/") && !strings.Contains(s, "..") {
+				valid = append(valid, s)
+			}
+		}
+		clamavPathsMu.Lock()
+		clamavPaths = valid
+		clamavPathsMu.Unlock()
+		if err := os.MkdirAll(filepath.Dir(clamavPathsFile), 0755); err == nil {
+			if b, err := json.Marshal(valid); err == nil {
+				_ = os.WriteFile(clamavPathsFile, b, 0644)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(valid)
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+func handleAVScanResults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	hostID := r.URL.Query().Get("host_id")
+	avScanMu.RLock()
+	out := make([]map[string]interface{}, len(avScanResults))
+	copy(out, avScanResults)
+	avScanMu.RUnlock()
+	if hostID != "" {
+		filtered := make([]map[string]interface{}, 0)
+		for _, a := range out {
+			if h, _ := a["host_id"].(string); h == hostID {
+				filtered = append(filtered, a)
+			}
+		}
+		out = filtered
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func handleIRCollect(w http.ResponseWriter, r *http.Request) {

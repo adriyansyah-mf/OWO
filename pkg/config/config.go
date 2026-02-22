@@ -53,6 +53,12 @@ type MonitorConfig struct {
 	ProcessSnapshotIntervalSeconds int `yaml:"process_snapshot_interval"`
 	// SigmaRulesPath: path to Sigma rules for stdout filter (only show execve that match). Empty = show all when stderr enabled.
 	SigmaRulesPath string `yaml:"sigma_rules_path"`
+	// ClamAVScanPaths: paths for av_scan (default: /tmp, /var/tmp, /home).
+	ClamAVScanPaths []string `yaml:"clamav_scan_paths"`
+	// RealtimeAVScan: scan executables on execve in real-time. Default false (adds latency).
+	RealtimeAVScan *bool `yaml:"realtime_av_scan"`
+	// DLPScanPaths: paths for dlp_scan (default: /tmp, /var/tmp, /home).
+	DLPScanPaths []string `yaml:"dlp_scan_paths"`
 }
 
 type OutputConfig struct {
@@ -211,6 +217,11 @@ func (c *Config) MonitorModuleEventsEnabled() bool {
 // MonitorProcessEventsEnabled returns whether fork/clone/clone3 monitoring is on.
 func (c *Config) MonitorProcessEventsEnabled() bool {
 	return c.Monitor.ProcessEvents != nil && *c.Monitor.ProcessEvents
+}
+
+// MonitorRealtimeAVScanEnabled returns whether to scan executables on execve.
+func (c *Config) MonitorRealtimeAVScanEnabled() bool {
+	return c.Monitor.RealtimeAVScan != nil && *c.Monitor.RealtimeAVScan
 }
 
 // OutputStderrEnabled returns whether to log alerts to stderr.

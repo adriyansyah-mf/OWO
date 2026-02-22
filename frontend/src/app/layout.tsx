@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { AlertStreamProvider } from '@/contexts/AlertStreamContext';
 import { SearchProvider } from '@/contexts/SearchContext';
 import AppShell from '@/components/AppShell';
+import AlertToastContainer from '@/components/AlertToast';
 
 export const metadata: Metadata = {
   title: 'OWO — Open Workstation Observer',
@@ -18,9 +20,12 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <AuthProvider>
-          <SearchProvider>
-            <AppShell>{children}</AppShell>
-          </SearchProvider>
+          <AlertStreamProvider>
+            <SearchProvider>
+              <AppShell>{children}</AppShell>
+              <AlertToastContainer />
+            </SearchProvider>
+          </AlertStreamProvider>
         </AuthProvider>
       </body>
     </html>

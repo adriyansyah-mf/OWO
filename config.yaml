@@ -30,13 +30,16 @@ monitor:
   process_snapshot_interval: 60   # periodic ps aux (no per-execve storage)
   execve: true
   sigma_rules_path: "sigma/rules"   # hanya execve yg match Sigma rules tampil di stdout
+  clamav_scan_paths: ["/tmp", "/var/tmp", "/home"]   # path untuk AV scan
+  realtime_av_scan: false   # true = scan executable on every execve (real-time malware detection)
+  dlp_scan_paths: ["/tmp", "/var/tmp", "/home"]     # path untuk DLP scan
   ebpf_path: ""
   file_events: true
   file_watch_all_paths: false
   network_events: true
   privilege_events: true
   exit_events: true
-  write_events: false
+  write_events: false   # set true for Device Control (USB copy monitoring)
   module_events: true
   process_events: false
   gtfobins_path: "contrib/gtfobins.json"
