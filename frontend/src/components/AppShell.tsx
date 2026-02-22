@@ -27,13 +27,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!token) return;
     const api = getApiBase() || 'http://localhost:8080';
     const headers = getAuthHeaders();
-    Promise.all([
-      fetch(`${api}/api/v1/alerts`, { headers }).then(r => r.json()).catch(() => []),
-      fetch(`${api}/api/v1/hosts`, { headers }).then(r => r.json()).catch(() => []),
-    ]).then(([a, h]) => {
-      setAlertsCount(Array.isArray(a) ? a.length : 0);
-      setHostsCount(Array.isArray(h) ? h.length : 0);
-    });
+    const refresh = () => {
+      Promise.all([
+        fetch(`${api}/api/v1/alerts`, { headers }).then(r => r.json()).catch(() => []),
+        fetch(`${api}/api/v1/hosts`, { headers }).then(r => r.json()).catch(() => []),
+      ]).then(([a, h]) => {
+        setAlertsCount(Array.isArray(a) ? a.length : 0);
+        setHostsCount(Array.isArray(h) ? h.length : 0);
+      });
+    };
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
   }, [token]);
 
   if (pathname === '/login') {

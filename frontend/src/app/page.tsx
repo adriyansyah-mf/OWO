@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getAuthHeaders, getApiBase } from '@/contexts/AuthContext';
 import { useSearch } from '@/contexts/SearchContext';
+import { useAlertStream } from '@/contexts/AlertStreamContext';
 
 function formatTime(ts: string) {
   if (!ts) return '—';
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [acting, setActing] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'critical' | 'isolated'>('all');
   const { query: search } = useSearch();
+  const { subscribeToNewAlerts } = useAlertStream();
   const api = getApiBase() || 'http://localhost:8080';
 
   const filteredHosts = hosts.filter((h: any) => {
@@ -52,14 +54,14 @@ export default function Dashboard() {
     return true;
   });
 
-  const refreshHosts = () => {
+  const refreshHosts = useCallback(() => {
     fetch(`${api}/api/v1/hosts`, { headers: getAuthHeaders() })
       .then(r => r.json())
       .then(h => setHosts(Array.isArray(h) ? h : []))
       .catch(() => {});
-  };
+  }, [api]);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     const api = getApiBase() || 'http://localhost:8080';
     const headers = getAuthHeaders();
     Promise.all([
@@ -70,6 +72,18 @@ export default function Dashboard() {
       setAlerts(Array.isArray(a) ? a : []);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    refresh();
+    const unsub = subscribeToNewAlerts((a) => {
+      setAlerts((prev) => (prev.some((x) => x.id === a.id) ? prev : [a, ...prev]));
+    });
+    const id = setInterval(refresh, 5000);
+    return () => {
+      unsub();
+      clearInterval(id);
+    };
+  }, [refresh, subscribeToNewAlerts]);
 
   const onlineCount = hosts.filter((h: any) => h.status === 'online').length;
 

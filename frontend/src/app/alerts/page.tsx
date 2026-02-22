@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getAuthHeaders, getApiBase } from '@/contexts/AuthContext';
 import { useSearch } from '@/contexts/SearchContext';
+import { useAlertStream } from '@/contexts/AlertStreamContext';
 
 function formatTime(ts: string) {
   if (!ts) return '—';
@@ -21,6 +22,7 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [testLoading, setTestLoading] = useState(false);
   const { query: search } = useSearch();
+  const { subscribeToNewAlerts } = useAlertStream();
 
   const filtered = alerts.filter((a: any) => {
     if (!search.trim()) return true;
@@ -43,9 +45,15 @@ export default function AlertsPage() {
 
   useEffect(() => {
     fetchAlerts();
-    const id = setInterval(fetchAlerts, 5000);
-    return () => clearInterval(id);
-  }, [fetchAlerts]);
+    const unsub = subscribeToNewAlerts((a) => {
+      setAlerts((prev) => (prev.some((x) => x.id === a.id) ? prev : [a, ...prev]));
+    });
+    const id = setInterval(fetchAlerts, 15000);
+    return () => {
+      unsub();
+      clearInterval(id);
+    };
+  }, [fetchAlerts, subscribeToNewAlerts]);
 
     const runTestInject = async () => {
     setTestLoading(true);

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { getApiBase } from './AuthContext';
 
 export type AlertToast = {
@@ -15,18 +15,27 @@ export type AlertToast = {
 type AlertStreamContextType = {
   toasts: AlertToast[];
   dismissToast: (id: string) => void;
+  subscribeToNewAlerts: (cb: (alert: AlertToast) => void) => () => void;
 };
 
 const AlertStreamContext = createContext<AlertStreamContextType>({
   toasts: [],
   dismissToast: () => {},
+  subscribeToNewAlerts: () => () => {},
 });
 
 export function AlertStreamProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<AlertToast[]>([]);
+  const [reconnect, setReconnect] = useState(0);
+  const subscribersRef = useRef<Set<(a: AlertToast) => void>>(new Set());
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const subscribeToNewAlerts = useCallback((cb: (alert: AlertToast) => void) => {
+    subscribersRef.current.add(cb);
+    return () => { subscribersRef.current.delete(cb); };
   }, []);
 
   useEffect(() => {
@@ -55,6 +64,7 @@ export function AlertStreamProvider({ children }: { children: React.ReactNode })
           if (next.length > 5) return next.slice(-5);
           return next;
         });
+        subscribersRef.current.forEach((cb) => cb(toast));
       } catch {
         // ignore parse errors
       }
@@ -62,13 +72,14 @@ export function AlertStreamProvider({ children }: { children: React.ReactNode })
 
     eventSource.onerror = () => {
       eventSource.close();
+      setTimeout(() => setReconnect((c) => c + 1), 3000);
     };
 
     return () => eventSource.close();
-  }, []);
+  }, [reconnect]);
 
   return (
-    <AlertStreamContext.Provider value={{ toasts, dismissToast }}>
+    <AlertStreamContext.Provider value={{ toasts, dismissToast, subscribeToNewAlerts }}>
       {children}
     </AlertStreamContext.Provider>
   );
