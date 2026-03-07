@@ -704,6 +704,10 @@ func main() {
 			}
 			cmdline := proc.Cmdline(ev.Pid)
 			if cmdline == "" {
+				// Fallback: use argv captured by eBPF at execve time
+				cmdline = strings.TrimRight(string(ev.Cmdline[:]), "\x00")
+			}
+			if cmdline == "" {
 				cmdline = comm
 			}
 			exe := proc.Exe(ev.Pid)

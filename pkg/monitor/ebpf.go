@@ -28,6 +28,7 @@ type ExecveEvent struct {
 	Ppid     uint32
 	Comm     [16]byte
 	Filename [256]byte
+	Cmdline  [512]byte // argv captured at execve time (space-separated)
 }
 
 // Monitor holds eBPF collection and ring buffer reader.
@@ -124,12 +125,14 @@ func NewFromEmbed() (*Monitor, error) {
 	return nil, fmt.Errorf("execve.o not found in %v", candidates)
 }
 
-// Event layout: either old (288 bytes) or new (296 bytes).
-// Old: pid, tid, uid, gid (16), comm[16], filename[256]
-// New: pid, tid, uid, gid, ppid, pad (24), comm[16], filename[256]
+// Event layout versions:
+// Old (288):     pid,tid,uid,gid (16), comm[16], filename[256]
+// New (296):     pid,tid,uid,gid,ppid,pad (24), comm[16], filename[256]
+// WithCmdline (808): pid,tid,uid,gid,ppid,pad (24), comm[16], filename[256], cmdline[512]
 const (
-	eventLenOld = 4*4 + 16 + 256   // 288
-	eventLenNew = 6*4 + 16 + 256   // 296
+	eventLenOld     = 4*4 + 16 + 256         // 288
+	eventLenNew     = 6*4 + 16 + 256         // 296
+	eventLenCmdline = 6*4 + 16 + 256 + 512   // 808
 )
 
 // ReadEvent blocks until the next event and parses it into ExecveEvent.
@@ -151,6 +154,9 @@ func (m *Monitor) ReadEvent() (ExecveEvent, error) {
 		e.Ppid = binary.LittleEndian.Uint32(raw[16:20])
 		copy(e.Comm[:], raw[24:40])
 		copy(e.Filename[:], raw[40:296])
+		if len(raw) >= eventLenCmdline {
+			copy(e.Cmdline[:], raw[296:808])
+		}
 	} else {
 		copy(e.Comm[:], raw[16:32])
 		copy(e.Filename[:], raw[32:288])
