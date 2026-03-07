@@ -1,0 +1,87 @@
+# nFPM package config — builds .deb and .rpm for the OWO EDR agent.
+# Install nFPM: https://nfpm.goreleaser.com/install/
+#   go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+# Build:
+#   make package-deb   →  dist/edr-client_<version>_amd64.deb
+#   make package-rpm   →  dist/edr-client_<version>_amd64.rpm
+
+name: edr-client
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: admin
+priority: optional
+maintainer: OWO EDR Team <edr@example.com>
+description: |
+  OWO EDR Agent — eBPF-based Linux endpoint detection and response.
+  Monitors process execution, file access, network connections,
+  privilege changes, and kernel module loads. Sends events to the
+  OWO EDR backend via NATS.
+vendor: OWO
+homepage: https://github.com/your-org/owo-edr
+license: proprietary
+
+depends:
+  - libc6      # deb only — nfpm uses this for deb, ignored for rpm
+
+contents:
+  # Main binary
+  - src: bin/edr-client
+    dst: /usr/sbin/edr-client
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+
+  # eBPF object files
+  - src: bpf/execve.o
+    dst: /usr/lib/edr/bpf/execve.o
+  - src: bpf/file_events.o
+    dst: /usr/lib/edr/bpf/file_events.o
+  - src: bpf/network_events.o
+    dst: /usr/lib/edr/bpf/network_events.o
+  - src: bpf/privilege_events.o
+    dst: /usr/lib/edr/bpf/privilege_events.o
+  - src: bpf/exit_events.o
+    dst: /usr/lib/edr/bpf/exit_events.o
+  - src: bpf/write_events.o
+    dst: /usr/lib/edr/bpf/write_events.o
+  - src: bpf/module_events.o
+    dst: /usr/lib/edr/bpf/module_events.o
+  - src: bpf/process_events.o
+    dst: /usr/lib/edr/bpf/process_events.o
+
+  # Systemd service unit
+  - src: deploy/edr-client.service
+    dst: /usr/lib/systemd/system/edr-client.service
+
+  # Default config (installed as .example — not overwritten on upgrade)
+  - src: deploy/edr.yaml.example
+    dst: /etc/edr/edr.yaml
+    type: config|noreplace  # preserve user edits on upgrade
+
+  # Environment file placeholder (NATS_URL, etc.)
+  - dst: /etc/edr/env
+    type: ghost             # Created empty by postinstall script
+
+  # State / log dirs
+  - dst: /var/lib/edr
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/lib/edr/dlp
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/lib/edr/dlp/quarantine
+    type: dir
+    file_info:
+      mode: 0750
+  - dst: /var/log/edr
+    type: dir
+    file_info:
+      mode: 0750
+
+scripts:
+  postinstall: deploy/scripts/postinstall.sh
+  preremove:   deploy/scripts/preremove.sh

@@ -15,6 +15,72 @@ type Config struct {
 	Monitor MonitorConfig `yaml:"monitor"`
 	Output  OutputConfig  `yaml:"output"`
 	Logging LoggingConfig `yaml:"logging"`
+	// NDLP holds enterprise Data Loss Prevention configuration.
+	// All fields have safe defaults and are optional — leaving this section
+	// empty retains the existing behaviour (on-demand scan via IR command).
+	NDLP NDLPConfig `yaml:"ndlp"`
+}
+
+// NDLPConfig contains enterprise DLP configuration for the agent.
+type NDLPConfig struct {
+	// PolicyCachePath is where DLP policies are persisted for offline operation.
+	// The store reads this file on startup and writes it on every policy update.
+	// Recommended: /var/lib/edr/dlp/policies.json
+	PolicyCachePath string `yaml:"policy_cache_path"`
+
+	// AuditLogPath is the JSON-lines audit file for all DLP events.
+	// Suitable for direct ingestion by Elasticsearch, Splunk, or any SIEM.
+	// Recommended: /var/log/edr/dlp-audit.jsonl
+	AuditLogPath string `yaml:"audit_log_path"`
+
+	// QuarantineDir is where quarantined files are moved.
+	// Required when any active policy uses ActionQuarantine.
+	// Default: /var/lib/edr/dlp/quarantine
+	QuarantineDir string `yaml:"quarantine_dir"`
+
+	// EscalationSubject overrides the NATS subject used for SOC/SOAR escalation.
+	// Default: "dlp.escalation"
+	EscalationSubject string `yaml:"escalation_subject"`
+
+	// EnableBehavioral activates the behavioral DLP engine (mass file access,
+	// USB bulk copy, archive creation, insider threat heuristics).
+	// Default: false (opt-in to avoid false positives in development environments).
+	EnableBehavioral bool `yaml:"enable_behavioral"`
+
+	// BehavioralThresholds configures the behavioral detection thresholds.
+	// All values apply per-process per 60-second sliding window.
+	BehavioralThresholds BehavioralThresholdsConfig `yaml:"behavioral_thresholds"`
+
+	// Channels lists which exfiltration channels to actively monitor.
+	// Valid values: "usb", "cloud_storage", "email", "clipboard", "print",
+	// "network_upload", "local_file", "all".
+	// Default: ["usb", "local_file"] (safe defaults that match existing behaviour).
+	Channels []string `yaml:"channels"`
+
+	// FingerprintRegistryPath is the path to a JSON file containing known
+	// sensitive document SHA256 fingerprints.
+	// Format: [{"hash": "<sha256hex>", "name": "...", "label": "restricted", "notes": "..."}]
+	FingerprintRegistryPath string `yaml:"fingerprint_registry_path"`
+
+	// UseDefaultPolicies loads the built-in enterprise DLP policies when no
+	// PolicyCachePath is configured or the cache is empty. Default: true.
+	UseDefaultPolicies bool `yaml:"use_default_policies"`
+}
+
+// BehavioralThresholdsConfig tunes the behavioral DLP engine thresholds.
+// All values are per-process per 60-second window. Zero means "use default."
+type BehavioralThresholdsConfig struct {
+	// MassAccessPerMinute: file accesses/min before RuleMassFileAccess fires.
+	// Default: 100
+	MassAccessPerMinute int `yaml:"mass_access_per_minute"`
+
+	// BulkReadMB: megabytes read/min before RuleBulkRead fires.
+	// Default: 50
+	BulkReadMB int `yaml:"bulk_read_mb"`
+
+	// USBCopyPerMinute: USB file writes/min before RuleUSBBulkCopy fires.
+	// Default: 20
+	USBCopyPerMinute int `yaml:"usb_copy_per_minute"`
 }
 
 type AgentConfig struct {
@@ -162,6 +228,20 @@ func Default() *Config {
 			},
 		},
 		Logging: LoggingConfig{Level: "info"},
+		NDLP: NDLPConfig{
+			PolicyCachePath:   "/var/lib/edr/dlp/policies.json",
+			AuditLogPath:      "/var/log/edr/dlp-audit.jsonl",
+			QuarantineDir:     "/var/lib/edr/dlp/quarantine",
+			EscalationSubject: "dlp.escalation",
+			EnableBehavioral:  false,
+			Channels:          []string{"usb", "local_file"},
+			UseDefaultPolicies: true,
+			BehavioralThresholds: BehavioralThresholdsConfig{
+				MassAccessPerMinute: 100,
+				BulkReadMB:          50,
+				USBCopyPerMinute:    20,
+			},
+		},
 	}
 }
 

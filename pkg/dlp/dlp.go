@@ -1,8 +1,17 @@
 // Package dlp provides Data Loss Prevention content scanning.
+//
+// Core scanner (this file): regex-based pattern matching against text files.
+// Enterprise extensions:
+//   - policy.go:     enforcement actions, channel definitions, offline policy cache.
+//   - classifier.go: file classification, MIME detection, fingerprint registry.
+//   - behavioral.go: behavioral detection (mass access, USB bulk copy, ML hook).
+//   - audit.go:      SIEM-ready structured audit trail.
 package dlp
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
@@ -22,14 +31,21 @@ type Pattern struct {
 	re     *regexp.Regexp
 }
 
-// Match is one DLP finding.
+// Match is one DLP finding. Extended with FileHash and MimeHint for the
+// enterprise classification and audit pipeline.
 type Match struct {
-	Path     string `json:"path"`
-	Pattern  string `json:"pattern"`
+	Path      string `json:"path"`
+	Pattern   string `json:"pattern"`
 	PatternID string `json:"pattern_id"`
-	Severity string `json:"severity"`
-	Snippet  string `json:"snippet"` // masked snippet
-	Line     int    `json:"line"`
+	Severity  string `json:"severity"`
+	Snippet   string `json:"snippet"`   // masked (redacted) context line
+	Line      int    `json:"line"`
+	// FileHash is the SHA256 of the containing file, computed once per ScanFile call.
+	// Used by FingerprintRegistry for exact-match DLP and by the audit trail.
+	FileHash string `json:"file_hash,omitempty"`
+	// MimeHint is the MIME type detected from the file's magic bytes.
+	// Populated by ScanFile; used by Classifier and audit events.
+	MimeHint MimeType `json:"mime_hint,omitempty"`
 }
 
 // PatternFromMap creates a Pattern from a map (e.g. JSON). Returns error if regex invalid.
@@ -159,7 +175,14 @@ func isTextFile(b []byte) bool {
 	return true
 }
 
-// ScanFile scans one file for patterns.
+// ScanFile scans one file for DLP patterns.
+//
+// Enhancements over the original implementation:
+//   - Computes SHA256 of the file (stored in Match.FileHash) for fingerprint
+//     lookup and audit trail enrichment.
+//   - Detects MIME type from magic bytes (stored in Match.MimeHint) so the
+//     caller can route findings to the correct classification pipeline.
+//   - Skips ELF/unknown binary formats that cannot contain text secrets.
 func (s *Scanner) ScanFile(path string) ([]Match, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -173,19 +196,44 @@ func (s *Scanner) ScanFile(path string) ([]Match, error) {
 		return nil, err
 	}
 	defer f.Close()
+
+	// Read header for MIME detection and text heuristic (512 bytes is sufficient).
 	buf := make([]byte, 512)
 	n, _ := io.ReadFull(f, buf)
-	if n > 0 && !isTextFile(buf[:n]) {
+	header := buf[:n]
+
+	// Detect MIME type from magic bytes (uses DetectMIME from classifier.go).
+	mime := DetectMIME(header)
+
+	// Skip formats that cannot embed text credentials (ELF, opaque binaries).
+	if mime == MimeELF || (mime == MimeUnknown && n > 0 && !isTextFile(header)) {
 		return nil, nil
 	}
-	f.Seek(0, 0)
+
+	// Seek back to start for the full-file SHA256 pass.
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, err
+	}
+
+	// Compute SHA256 fingerprint in a single streaming pass.
+	// The hash is attached to every Match for audit trail and fingerprint lookup.
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, err
+	}
+	fileHash := hex.EncodeToString(h.Sum(nil))
+
+	// Seek back to beginning for pattern scanning.
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, err
+	}
 
 	var matches []Match
-	scanner := bufio.NewScanner(f)
+	lineScanner := bufio.NewScanner(f)
 	lineNum := 0
-	for scanner.Scan() && len(matches) < s.MaxMatches {
+	for lineScanner.Scan() && len(matches) < s.MaxMatches {
 		lineNum++
-		line := scanner.Text()
+		line := lineScanner.Text()
 		for _, p := range s.Patterns {
 			if p.re == nil {
 				continue
@@ -195,7 +243,7 @@ func (s *Scanner) ScanFile(path string) ([]Match, error) {
 				if loc[1]-loc[0] < len(line) {
 					snippet = line[:loc[0]] + mask(line[loc[0]:loc[1]]) + line[loc[1]:]
 				}
-				// Truncate long lines
+				// Truncate long lines to avoid bloating audit logs.
 				if len(snippet) > 120 {
 					snippet = snippet[:117] + "..."
 				}
@@ -206,6 +254,8 @@ func (s *Scanner) ScanFile(path string) ([]Match, error) {
 					Severity:  p.Severity,
 					Snippet:   snippet,
 					Line:      lineNum,
+					FileHash:  fileHash,
+					MimeHint:  mime,
 				})
 				if len(matches) >= s.MaxMatches {
 					return matches, nil

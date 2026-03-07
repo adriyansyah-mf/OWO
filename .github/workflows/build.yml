@@ -1,0 +1,7 @@
+# .github/workflows/build.yml
+- uses: actions/checkout@v4
+- name: Build
+  run: |
+    sudo apt install -y clang llvm linux-headers-$(uname -r) golang-go
+    make all
+    make package-deb

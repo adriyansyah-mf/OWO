@@ -1,0 +1,42 @@
+[Unit]
+Description=OWO EDR Agent
+Documentation=https://github.com/your-org/owo-edr
+After=network-online.target
+Wants=network-online.target
+# Restart if NATS is temporarily unavailable
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/edr-client -config /etc/edr/edr.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Runtime directories (created automatically by systemd, owned by root)
+RuntimeDirectory=edr
+StateDirectory=edr
+LogsDirectory=edr
+
+# Required for eBPF
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_SYS_RESOURCE CAP_PERFMON
+
+# Harden the service (still allows eBPF + kernel interaction)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/edr /var/log/edr /run/edr
+PrivateTmp=yes
+PrivateDevices=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectControlGroups=no
+RestrictNamespaces=no
+LockPersonality=yes
+
+# Environment overrides (can also be set in /etc/edr/env)
+EnvironmentFile=-/etc/edr/env
+
+[Install]
+WantedBy=multi-user.target

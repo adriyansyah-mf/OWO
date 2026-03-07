@@ -28,7 +28,10 @@ BPF_CFLAGS  := -O2 -g -target bpf -D__TARGET_ARCH_$(BPF_ARCH) \
 	-I $(CURDIR)/bpf/include \
 	-Wno-address-of-packed-member
 
-.PHONY: all clean bpf go run fetch-gtfobins
+DIST_DIR      ?= dist
+OS            ?= linux
+
+.PHONY: all clean bpf go run fetch-gtfobins package package-deb package-rpm
 
 all: bpf go
 
@@ -69,5 +72,31 @@ run: all
 fetch-gtfobins:
 	@sh "$(CURDIR)/contrib/scripts/fetch_gtfobins.sh"
 
+## ── Packaging (requires nFPM: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest) ──
+
+# Build both .deb and .rpm
+package: all package-deb package-rpm
+
+package-deb: all
+	mkdir -p $(DIST_DIR)
+	VERSION=$(VERSION) nfpm package --config nfpm.yaml --packager deb --target $(DIST_DIR)/
+
+package-rpm: all
+	mkdir -p $(DIST_DIR)
+	VERSION=$(VERSION) nfpm package --config nfpm.yaml --packager rpm --target $(DIST_DIR)/
+
+# Build a plain tarball (distro-agnostic, used by install.sh)
+package-tar: all
+	mkdir -p $(DIST_DIR)
+	tar -czf $(DIST_DIR)/edr-client_$(VERSION)_$(ARCH).tar.gz \
+		bin/edr-client \
+		bpf/*.o \
+		deploy/edr-client.service \
+		deploy/edr.yaml.example \
+		deploy/scripts/postinstall.sh \
+		deploy/scripts/preremove.sh
+	@echo "Tarball: $(DIST_DIR)/edr-client_$(VERSION)_$(ARCH).tar.gz"
+
 clean:
 	rm -f bpf/execve.o bpf/file_events.o bpf/network_events.o bpf/privilege_events.o bpf/exit_events.o bpf/write_events.o bpf/module_events.o bpf/process_events.o bin/edr-client
+	rm -rf $(DIST_DIR)

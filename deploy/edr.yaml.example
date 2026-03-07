@@ -1,0 +1,88 @@
+# OWO EDR Agent Configuration
+# Copy to /etc/edr/edr.yaml and adjust to your environment.
+# All fields are optional — sensible defaults are used for omitted values.
+
+agent:
+  # name: my-host-01          # Default: system hostname
+  # hostname: my-host-01      # Default: os.Hostname()
+  # group: servers             # Optional grouping label (e.g. "servers", "workstations")
+
+monitor:
+  execve:            true    # Process execution events (eBPF) — recommended
+  file_events:       true    # File open/create/delete (openat/unlink/rename)
+  network_events:    true    # TCP/UDP connections (connect/sendto/accept)
+  privilege_events:  true    # setuid/setgid privilege changes
+  exit_events:       true    # Process exit (exit_group)
+  module_events:     true    # Kernel module loads (insmod/modprobe)
+  write_events:      false   # Write syscall — noisy, disable unless needed
+  process_events:    false   # fork/clone — very noisy, disable unless needed
+
+  # Path to pre-compiled eBPF objects directory.
+  # Default: /usr/lib/edr/bpf (set by the package installer).
+  # ebpf_path: /usr/lib/edr/bpf
+
+  # Periodic process snapshot (ps aux-style) interval in seconds.
+  # Set to 0 to disable.
+  process_snapshot_interval: 60
+
+  # file_watch_all_paths: false  # true = watch all paths (noisy); false = only /etc,/bin,/tmp,etc.
+
+  # Path to local GTFOBins data (optional — enriches process alerts)
+  # gtfobins_path: /usr/lib/edr/gtfobins.json
+
+  # ClamAV on-demand scan paths
+  clamav_scan_paths:
+    - /tmp
+    - /var/tmp
+    - /home
+
+  # DLP on-demand scan paths
+  dlp_scan_paths:
+    - /tmp
+    - /var/tmp
+    - /home
+
+  # realtime_av_scan: false  # Scan every executed binary with ClamAV (adds latency)
+
+output:
+  # Log to a local file (JSON lines, suitable for Filebeat/Fluentd ingestion)
+  file:
+    enabled: false
+    path: /var/log/edr/events.jsonl
+
+  # Send to stderr (useful for debugging; disabled automatically when NATS/file is active)
+  stderr: false
+
+  # Send events to NATS (recommended for full EDR pipeline)
+  nats:
+    enabled: true
+    url: nats://127.0.0.1:4222   # Override with NATS_URL env var
+    subject: events.default
+    tenant_id: default            # Used to tag events (multi-tenant environments)
+
+  # Forward to a remote manager over TCP/TLS/HTTP (Wazuh-compatible)
+  # remote:
+  #   enabled: false
+  #   address: 192.168.1.10:1514
+  #   protocol: tcp              # tcp | tls | http
+  #   http_endpoint: /alerts
+  #   max_retries: 5
+  #   retry_interval: 10
+
+logging:
+  level: info   # debug | info | warn | error
+
+# Enterprise DLP (Network Data Loss Prevention) — optional
+ndlp:
+  policy_cache_path: /var/lib/edr/dlp/policies.json
+  audit_log_path: /var/log/edr/dlp-audit.jsonl
+  quarantine_dir: /var/lib/edr/dlp/quarantine
+  enable_behavioral: false
+  use_default_policies: true
+  channels:
+    - usb
+    - local_file
+  behavioral_thresholds:
+    mass_access_per_minute: 100
+    bulk_read_mb: 50
+    usb_copy_per_minute: 20
