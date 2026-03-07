@@ -56,7 +56,9 @@ int trace_execve(struct sys_enter_ctx *ctx)
 	e->filename[MAX_FILENAME_LEN - 1] = '\0';
 
 	/* Capture argv into cmdline as space-separated string.
-	 * Masking pos with (MAX_CMDLINE_LEN-1) satisfies the eBPF verifier. */
+	 * Use a compile-time constant (32) for the bpf_probe_read_user_str
+	 * size argument -- the eBPF verifier rejects variable-size reads
+	 * because it cannot prove R2 (size) is non-negative at every path. */
 	__builtin_memset(e->cmdline, 0, sizeof(e->cmdline));
 	__u32 pos = 0;
 	char *argp;
@@ -73,16 +75,15 @@ int trace_execve(struct sys_enter_ctx *ctx)
 			pos++;
 		}
 
-		if (pos >= MAX_CMDLINE_LEN - 1)
+		/* Leave at least 32 bytes free so the constant-size read fits */
+		if (pos >= MAX_CMDLINE_LEN - 32)
 			break;
 
-		__u32 offset    = pos & (MAX_CMDLINE_LEN - 1);
-		__u32 remaining = ((MAX_CMDLINE_LEN - 1) - offset) & (MAX_CMDLINE_LEN - 1);
-		if (!remaining)
-			break;
+		/* pos < (MAX_CMDLINE_LEN - 32) == 480 < 512, so
+		 * (pos & (MAX_CMDLINE_LEN-1)) == pos, and pos+32 <= 511. */
 		ret = bpf_probe_read_user_str(
-			e->cmdline + offset,
-			remaining,
+			e->cmdline + (pos & (MAX_CMDLINE_LEN - 1)),
+			32,
 			argp);
 
 		if (ret > 1)
