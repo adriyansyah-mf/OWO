@@ -67,11 +67,11 @@ resolve_version() {
     if [ "$EDR_VERSION" = "latest" ]; then
         # Try to resolve latest from GitHub API
         if command -v curl >/dev/null 2>&1; then
-            EDR_VERSION=$(curl -fsSL "https://api.github.com/repos/your-org/owo-edr/releases/latest" \
+            EDR_VERSION=$(curl -fsSL "https://api.github.com/repos/adriyansyah-mf/OWO/releases/latest" \
                 2>/dev/null | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' || true)
         fi
         # Fallback to hardcoded version
-        EDR_VERSION="${EDR_VERSION:-v0.1.0}"
+        EDR_VERSION="${EDR_VERSION:-v0.1.1}"
     fi
     info "Installing version: $EDR_VERSION"
 }
@@ -125,7 +125,7 @@ download "$PKG_URL" "$TMPDIR/$PKG_FILE"
 
 info "Installing package..."
 case "$PKG_TYPE" in
-    deb) dpkg -i "$TMPDIR/$PKG_FILE";;
+    deb) DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "$TMPDIR/$PKG_FILE";;
     rpm) rpm -Uvh --force "$TMPDIR/$PKG_FILE";;
 esac
 
