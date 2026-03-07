@@ -76,9 +76,12 @@ int trace_execve(struct sys_enter_ctx *ctx)
 		if (pos >= MAX_CMDLINE_LEN - 1)
 			break;
 
-		__u32 remaining = (MAX_CMDLINE_LEN - 1) - (pos & (MAX_CMDLINE_LEN - 1));
+		__u32 offset    = pos & (MAX_CMDLINE_LEN - 1);
+		__u32 remaining = ((MAX_CMDLINE_LEN - 1) - offset) & (MAX_CMDLINE_LEN - 1);
+		if (!remaining)
+			break;
 		ret = bpf_probe_read_user_str(
-			e->cmdline + (pos & (MAX_CMDLINE_LEN - 1)),
+			e->cmdline + offset,
 			remaining,
 			argp);
 
