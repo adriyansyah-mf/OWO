@@ -15,16 +15,12 @@ BPF_ARCH_x86_64    := x86
 BPF_ARCH           := $(BPF_ARCH_$(ARCH))
 BPF_ARCH           := $(or $(BPF_ARCH),$(ARCH))
 
-# Kernel arch paths first (asm/types.h); then system linux/bpf.h; arch triplet for asm/bitsperlong.h
+# BPF sources only use libbpf headers (<bpf/bpf_helpers.h>, <linux/bpf.h>).
+# No kernel source tree required — libbpf-dev provides all needed headers.
 SYS_ARCH_INC ?= /usr/include/$(ARCH)-linux-gnu
 BPF_CFLAGS  := -O2 -g -target bpf -D__TARGET_ARCH_$(BPF_ARCH) \
-	-I $(KERNEL_HEADERS)/arch/$(KERNEL_ARCH)/include \
-	-I $(KERNEL_HEADERS)/arch/$(KERNEL_ARCH)/include/uapi \
-	-I $(KERNEL_HEADERS)/arch/$(KERNEL_ARCH)/include/generated/uapi \
-	-I $(KERNEL_HEADERS)/include \
-	-I $(KERNEL_HEADERS)/include/uapi \
-	-I $(KERNEL_HEADERS)/include/generated/uapi \
 	-I $(SYS_ARCH_INC) \
+	-I /usr/include \
 	-I $(CURDIR)/bpf/include \
 	-Wno-address-of-packed-member
 

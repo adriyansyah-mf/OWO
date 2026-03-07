@@ -39,14 +39,13 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
+          # clang-14: more stable BPF target than clang-18 (avoids segfault on ubuntu-latest)
           sudo apt-get install -y --no-install-recommends \
-            clang llvm make \
-            linux-headers-$(uname -r) \
-            linux-tools-$(uname -r) \
+            clang-14 llvm-14 make \
             libbpf-dev libelf-dev
 
       - name: Build eBPF objects
-        run: make bpf
+        run: make bpf CLANG=clang-14 LLC=llc-14
 
       - name: Build Go binary
         run: |
