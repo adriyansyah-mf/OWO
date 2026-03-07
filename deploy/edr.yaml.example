@@ -8,18 +8,17 @@ agent:
   # group: servers             # Optional grouping label (e.g. "servers", "workstations")
 
 monitor:
-  execve:            true    # Process execution events (eBPF) — recommended
-  file_events:       true    # File open/create/delete (openat/unlink/rename)
-  network_events:    true    # TCP/UDP connections (connect/sendto/accept)
-  privilege_events:  true    # setuid/setgid privilege changes
-  exit_events:       true    # Process exit (exit_group)
-  module_events:     true    # Kernel module loads (insmod/modprobe)
-  write_events:      false   # Write syscall — noisy, disable unless needed
-  process_events:    false   # fork/clone — very noisy, disable unless needed
+  execve: true
+  file_events: true
+  network_events: true
+  privilege_events: true
+  exit_events: true
+  module_events: true
+  write_events: false
+  process_events: false
 
-  # Path to pre-compiled eBPF objects directory.
-  # Default: /usr/lib/edr/bpf (set by the package installer).
-  # ebpf_path: /usr/lib/edr/bpf
+  # Path to eBPF object files — set by the package installer
+  ebpf_path: /usr/lib/edr/bpf
 
   # Periodic process snapshot (ps aux-style) interval in seconds.
   # Set to 0 to disable.

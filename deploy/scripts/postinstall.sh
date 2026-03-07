@@ -10,11 +10,6 @@ if [ ! -f /etc/edr/env ]; then
 EOF
 fi
 
-# Set default ebpf_path in config if it's the example file
-if grep -q 'ebpf_path:' /etc/edr/edr.yaml 2>/dev/null; then
-    sed -i 's|# ebpf_path: /usr/lib/edr/bpf|ebpf_path: /usr/lib/edr/bpf|' /etc/edr/edr.yaml
-fi
-
 # Reload systemd and enable service
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
