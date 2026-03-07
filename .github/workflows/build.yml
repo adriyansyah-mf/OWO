@@ -40,11 +40,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            clang llvm make \
+            clang-14 llvm-14 make \
             libbpf-dev libelf-dev
 
       - name: Build eBPF objects
-        run: make bpf
+        # Use clang-14 explicitly: clang-18 (Ubuntu 24.04 default) crashes
+        # with -g flag due to a CGDebugInfo infinite recursion bug.
+        # clang-14 is stable with -g and generates proper BTF sections.
+        run: CLANG=clang-14 make bpf
 
       - name: Build Go binary
         run: |
