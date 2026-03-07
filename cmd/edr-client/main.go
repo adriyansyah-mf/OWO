@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -110,15 +111,54 @@ func main() {
 	}
 
 	var sigmaEng *detection.Engine
+	var sigmaEngMu sync.RWMutex
+
+	var reloadSigmaRules func()
 	if p := cfg.Monitor.SigmaRulesPath; p != "" {
-		rules, err := sigma.LoadDir(p)
-		if err != nil {
-			logger.Warn("sigma rules %s: %v (stdout shows all)", p, err)
-		} else {
-			sigmaEng = detection.NewEngine()
-			sigmaEng.SetRules(rules)
-			logger.Info("sigma: %d rules for stdout filter", len(rules))
+		reloadSigmaRules = func() {
+			rules, err := sigma.LoadDir(p)
+			if err != nil {
+				logger.Warn("sigma: reload failed: %v", err)
+				return
+			}
+			eng := detection.NewEngine()
+			eng.SetRules(rules)
+			sigmaEngMu.Lock()
+			sigmaEng = eng
+			sigmaEngMu.Unlock()
+			logger.Info("sigma: loaded %d rules", len(rules))
 		}
+		reloadSigmaRules()
+
+		// Poll every 30s; reload if any rule file mtime changed.
+		go func() {
+			var lastMod time.Time
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				changed := false
+				entries, err := os.ReadDir(p)
+				if err != nil {
+					continue
+				}
+				for _, ent := range entries {
+					if !strings.HasSuffix(ent.Name(), ".yml") {
+						continue
+					}
+					info, err := ent.Info()
+					if err != nil {
+						continue
+					}
+					if info.ModTime().After(lastMod) {
+						lastMod = info.ModTime()
+						changed = true
+					}
+				}
+				if changed {
+					reloadSigmaRules()
+				}
+			}
+		}()
 	}
 
 	if !cfg.MonitorExecveEnabled() {
@@ -185,6 +225,46 @@ func main() {
 					logger.Info("device control: policy updated (enabled=%v)", p.Enabled)
 				}
 			})
+			// Subscribe to sigma rule updates pushed from the server.
+			// Payload: {"action":"upsert"|"delete","filename":"rule.yml","content":"..."}
+			nc.Subscribe("rules."+tenant, func(m *nats.Msg) { //nolint:errcheck
+				var payload struct {
+					Action   string `json:"action"`
+					Filename string `json:"filename"`
+					Content  string `json:"content"`
+				}
+				if json.Unmarshal(m.Data, &payload) != nil || cfg.Monitor.SigmaRulesPath == "" {
+					return
+				}
+				fname := filepath.Base(payload.Filename)
+				if !strings.HasSuffix(fname, ".yml") {
+					return
+				}
+				dest := filepath.Join(cfg.Monitor.SigmaRulesPath, fname)
+				switch payload.Action {
+				case "upsert":
+					if payload.Content == "" {
+						return
+					}
+					if err := os.WriteFile(dest, []byte(payload.Content), 0644); err != nil {
+						logger.Warn("sigma: write rule %s: %v", fname, err)
+						return
+					}
+					logger.Info("sigma: rule %s updated via NATS", fname)
+				case "delete":
+					if err := os.Remove(dest); err != nil {
+						logger.Warn("sigma: remove rule %s: %v", fname, err)
+						return
+					}
+					logger.Info("sigma: rule %s deleted via NATS", fname)
+				default:
+					return
+				}
+				if reloadSigmaRules != nil {
+					reloadSigmaRules()
+				}
+			})
+
 			// Request current policy on startup (in case we connected after API)
 			if resp, err := nc.Request("device_control.request", nil, 2*time.Second); err == nil {
 				var p devicecontrol.Policy
@@ -797,7 +877,10 @@ func main() {
 				}
 				eventJSON, _ := json.Marshal(evMap)
 				logToStderr := true
-				if sigmaEng != nil {
+				sigmaEngMu.RLock()
+				curEng := sigmaEng
+				sigmaEngMu.RUnlock()
+				if curEng != nil {
 					// Gunakan path dari eBPF (ev.Filename) sebagai fallback untuk Exe: proc.Exe()
 					// sering kosong karena nc/sh exit cepat (connection refused) sebelum kita baca /proc.
 					exeForSigma := exe
@@ -834,7 +917,7 @@ func main() {
 						},
 					}
 					norm := buildNorm(&env)
-					matched := sigmaEng.Eval(norm)
+					matched := curEng.Eval(norm)
 					logToStderr = len(matched) > 0
 					if len(matched) > 0 && natsConn != nil {
 						tenant := cfg.Output.Nats.TenantID
