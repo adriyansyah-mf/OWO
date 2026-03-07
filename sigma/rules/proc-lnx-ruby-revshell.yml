@@ -1,0 +1,28 @@
+title: Ruby Reverse Shell
+id: proc-lnx-ruby-revshell
+status: experimental
+description: Detects Ruby one-liner reverse shells using socket require
+author: EDR-Linux
+date: 2026/03/08
+
+logsource:
+  category: process_creation
+  product: linux
+
+detection:
+  # ruby -rsocket -e 'exit if fork;...'
+  selection_rsocket:
+    Image|endswith: 'ruby'
+    CommandLine|contains: '-rsocket'
+
+  selection_socket:
+    Image|endswith: 'ruby'
+    CommandLine|contains: 'TCPSocket'
+
+  condition: 1 of selection*
+
+level: high
+
+tags:
+  - attack.execution
+  - attack.t1059.004

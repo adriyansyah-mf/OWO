@@ -1,0 +1,32 @@
+title: PHP Reverse Shell
+id: proc-lnx-php-revshell
+status: experimental
+description: Detects PHP CLI reverse shells using fsockopen or proc_open
+author: EDR-Linux
+date: 2026/03/08
+
+logsource:
+  category: process_creation
+  product: linux
+
+detection:
+  # php -r 'fsockopen(...)'
+  selection_fsock:
+    Image|endswith: 'php'
+    CommandLine|contains: 'fsockopen'
+
+  selection_proc:
+    Image|endswith: 'php'
+    CommandLine|contains: 'proc_open'
+
+  selection_shell_exec:
+    Image|endswith: 'php'
+    CommandLine|contains: 'shell_exec'
+
+  condition: 1 of selection*
+
+level: high
+
+tags:
+  - attack.execution
+  - attack.t1059.006

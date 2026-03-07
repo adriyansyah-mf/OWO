@@ -1,0 +1,28 @@
+title: Perl Reverse Shell
+id: proc-lnx-perl-revshell
+status: experimental
+description: Detects Perl one-liner reverse shells using Socket module
+author: EDR-Linux
+date: 2026/03/08
+
+logsource:
+  category: process_creation
+  product: linux
+
+detection:
+  # perl -e 'use Socket;...'
+  selection_socket:
+    Image|endswith: 'perl'
+    CommandLine|contains: 'use Socket'
+
+  selection_io:
+    Image|endswith: 'perl'
+    CommandLine|contains: 'IO::Socket'
+
+  condition: 1 of selection*
+
+level: high
+
+tags:
+  - attack.execution
+  - attack.t1059.006
