@@ -1,0 +1,24 @@
+title: Netcat Reverse Shell (nc -e)
+id: proc-lnx-netcat-revshell
+status: experimental
+description: Detects nc -e /bin/sh (reverse shell). Matches "nc -e /bin/sh 127.0.0.1 4444"
+author: EDR-Linux
+date: 2026/02/15
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_nc:
+    CommandLine|contains: ' -e '
+    Image|endswith: '/nc'
+  selection_ncat:
+    CommandLine|contains: ' -e '
+    Image|endswith: 'ncat'
+  selection_cmdline:
+    CommandLine|contains: 'nc -e'
+  selection_sh:
+    CommandLine|contains: '-e /bin/sh'
+  condition: 1 of selection*
+level: high
+tags:
+  - attack.execution
