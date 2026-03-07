@@ -204,10 +204,23 @@ func main() {
 		defer exporter.Close()
 	}
 
-	ebpfPath := cfg.Monitor.EbpfPath
+	// ebpfDir is the directory containing eBPF .o files.
+	// If EbpfPath ends with ".o" (legacy: specific file), use its parent dir.
+	ebpfDir := cfg.Monitor.EbpfPath
+	if strings.HasSuffix(ebpfDir, ".o") {
+		ebpfDir = filepath.Dir(ebpfDir)
+	}
+	// bpfObj returns the full path to an eBPF object file, or "" to trigger auto-detect.
+	bpfObj := func(name string) string {
+		if ebpfDir != "" {
+			return filepath.Join(ebpfDir, name)
+		}
+		return ""
+	}
+
 	var m *monitor.Monitor
-	if ebpfPath != "" {
-		m, err = monitor.New(ebpfPath)
+	if p := bpfObj("execve.o"); p != "" {
+		m, err = monitor.New(p)
 	} else {
 		m, err = monitor.NewFromEmbed()
 	}
@@ -219,7 +232,11 @@ func main() {
 	var fileMon *monitor.FileMonitor
 	if cfg.MonitorFileEventsEnabled() {
 		watchAll := cfg.FileWatchAllPaths()
-		fileMon, err = monitor.NewFileMonitorFromEmbed(watchAll)
+		if p := bpfObj("file_events.o"); p != "" {
+			fileMon, err = monitor.NewFileMonitor(p, watchAll)
+		} else {
+			fileMon, err = monitor.NewFileMonitorFromEmbed(watchAll)
+		}
 		if err != nil {
 			logger.Warn("file_events: %v (disabled)", err)
 			fileMon = nil
@@ -234,7 +251,11 @@ func main() {
 	}
 	var netMon *monitor.NetworkMonitor
 	if cfg.MonitorNetworkEventsEnabled() {
-		netMon, err = monitor.NewNetworkMonitorFromEmbed()
+		if p := bpfObj("network_events.o"); p != "" {
+			netMon, err = monitor.NewNetworkMonitor(p)
+		} else {
+			netMon, err = monitor.NewNetworkMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("network_events: %v (disabled)", err)
 			netMon = nil
@@ -245,7 +266,11 @@ func main() {
 	}
 	var privMon *monitor.PrivilegeMonitor
 	if cfg.MonitorPrivilegeEventsEnabled() {
-		privMon, err = monitor.NewPrivilegeMonitorFromEmbed()
+		if p := bpfObj("privilege_events.o"); p != "" {
+			privMon, err = monitor.NewPrivilegeMonitor(p)
+		} else {
+			privMon, err = monitor.NewPrivilegeMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("privilege_events: %v (disabled)", err)
 			privMon = nil
@@ -256,7 +281,11 @@ func main() {
 	}
 	var exitMon *monitor.ExitMonitor
 	if cfg.MonitorExitEventsEnabled() {
-		exitMon, err = monitor.NewExitMonitorFromEmbed()
+		if p := bpfObj("exit_events.o"); p != "" {
+			exitMon, err = monitor.NewExitMonitor(p)
+		} else {
+			exitMon, err = monitor.NewExitMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("exit_events: %v (disabled)", err)
 			exitMon = nil
@@ -267,7 +296,11 @@ func main() {
 	}
 	var writeMon *monitor.WriteMonitor
 	if cfg.MonitorWriteEventsEnabled() {
-		writeMon, err = monitor.NewWriteMonitorFromEmbed()
+		if p := bpfObj("write_events.o"); p != "" {
+			writeMon, err = monitor.NewWriteMonitor(p)
+		} else {
+			writeMon, err = monitor.NewWriteMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("write_events: %v (disabled)", err)
 			writeMon = nil
@@ -278,7 +311,11 @@ func main() {
 	}
 	var modMon *monitor.ModuleMonitor
 	if cfg.MonitorModuleEventsEnabled() {
-		modMon, err = monitor.NewModuleMonitorFromEmbed()
+		if p := bpfObj("module_events.o"); p != "" {
+			modMon, err = monitor.NewModuleMonitor(p)
+		} else {
+			modMon, err = monitor.NewModuleMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("module_events: %v (disabled)", err)
 			modMon = nil
@@ -289,7 +326,11 @@ func main() {
 	}
 	var processMon *monitor.ProcessMonitor
 	if cfg.MonitorProcessEventsEnabled() {
-		processMon, err = monitor.NewProcessMonitorFromEmbed()
+		if p := bpfObj("process_events.o"); p != "" {
+			processMon, err = monitor.NewProcessMonitor(p)
+		} else {
+			processMon, err = monitor.NewProcessMonitorFromEmbed()
+		}
 		if err != nil {
 			logger.Warn("process_events: %v (disabled)", err)
 			processMon = nil

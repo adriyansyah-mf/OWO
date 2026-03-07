@@ -101,9 +101,10 @@ func New(objPath string) (*Monitor, error) {
 	return &Monitor{coll: coll, link: lnk, reader: reader}, nil
 }
 
-// NewFromEmbed tries common paths for execve.o (current dir, bpf/, executable dir).
+// NewFromEmbed tries common paths for execve.o (package install dir, current dir, bpf/, executable dir).
 func NewFromEmbed() (*Monitor, error) {
 	candidates := []string{
+		"/usr/lib/edr/bpf/execve.o",
 		"bpf/execve.o",
 		"execve.o",
 	}

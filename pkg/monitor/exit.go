@@ -76,17 +76,15 @@ func NewExitMonitor(objPath string) (*ExitMonitor, error) {
 
 // NewExitMonitorFromEmbed finds bpf/exit_events.o and loads.
 func NewExitMonitorFromEmbed() (*ExitMonitor, error) {
-	for _, p := range []string{"bpf/exit_events.o", "exit_events.o"} {
-		if _, err := os.Stat(p); err == nil {
-			return NewExitMonitor(p)
-		}
-	}
+	candidates := []string{"/usr/lib/edr/bpf/exit_events.o", "bpf/exit_events.o", "exit_events.o"}
 	exe, _ := os.Executable()
 	if exe != "" {
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "bpf/exit_events.o"), filepath.Join(filepath.Dir(exe), "exit_events.o")} {
-			if _, err := os.Stat(p); err == nil {
-				return NewExitMonitor(p)
-			}
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bpf/exit_events.o"), filepath.Join(exeDir, "exit_events.o"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return NewExitMonitor(p)
 		}
 	}
 	return nil, fmt.Errorf("exit_events.o not found")

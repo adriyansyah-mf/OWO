@@ -94,25 +94,25 @@ type AgentConfig struct {
 
 type MonitorConfig struct {
 	// Execve enables process execution (eBPF) monitoring. Default true.
-	Execve *bool `yaml:"execve"`
-	// EbpfPath path to execve.o. Default: auto-detect (bpf/execve.o).
+	Execve bool `yaml:"execve"`
+	// EbpfPath directory containing eBPF .o files. Default: auto-detect.
 	EbpfPath string `yaml:"ebpf_path"`
 	// FileEvents enables openat/unlink/rename. Default true.
-	FileEvents *bool `yaml:"file_events"`
+	FileEvents bool `yaml:"file_events"`
 	// FileWatchAllPaths if true, monitor all absolute paths; if false, only /etc,/usr/bin,/bin,/tmp,/dev/shm. Default false (noisier if true).
-	FileWatchAllPaths *bool `yaml:"file_watch_all_paths"`
+	FileWatchAllPaths bool `yaml:"file_watch_all_paths"`
 	// NetworkEvents enables connect/sendto/accept for correlation. Default true.
-	NetworkEvents *bool `yaml:"network_events"`
+	NetworkEvents bool `yaml:"network_events"`
 	// PrivilegeEvents enables setuid/setgid/setreuid/setregid. Default true.
-	PrivilegeEvents *bool `yaml:"privilege_events"`
+	PrivilegeEvents bool `yaml:"privilege_events"`
 	// ExitEvents enables process exit (exit_group). Default true.
-	ExitEvents *bool `yaml:"exit_events"`
+	ExitEvents bool `yaml:"exit_events"`
 	// WriteEvents enables write syscall (noisy; path from /proc/pid/fd). Default false.
-	WriteEvents *bool `yaml:"write_events"`
+	WriteEvents bool `yaml:"write_events"`
 	// ModuleEvents enables kernel module load (init_module/finit_module). Default true.
-	ModuleEvents *bool `yaml:"module_events"`
+	ModuleEvents bool `yaml:"module_events"`
 	// ProcessEvents enables fork/clone/clone3 (process creation). Default false (noisy).
-	ProcessEvents *bool `yaml:"process_events"`
+	ProcessEvents bool `yaml:"process_events"`
 	// GTFOBinsPath path to local gtfobins api.json (from contrib/scripts/fetch_gtfobins.sh). Empty = disabled.
 	GTFOBinsPath string `yaml:"gtfobins_path"`
 	// ProcessSnapshotIntervalSeconds: periodic process list (ps aux style) sent to server. 0 = disabled. Default 60.
@@ -122,7 +122,7 @@ type MonitorConfig struct {
 	// ClamAVScanPaths: paths for av_scan (default: /tmp, /var/tmp, /home).
 	ClamAVScanPaths []string `yaml:"clamav_scan_paths"`
 	// RealtimeAVScan: scan executables on execve in real-time. Default false (adds latency).
-	RealtimeAVScan *bool `yaml:"realtime_av_scan"`
+	RealtimeAVScan bool `yaml:"realtime_av_scan"`
 	// DLPScanPaths: paths for dlp_scan (default: /tmp, /var/tmp, /home).
 	DLPScanPaths []string `yaml:"dlp_scan_paths"`
 }
@@ -186,7 +186,6 @@ func Load(path string) (*Config, error) {
 
 // Default returns default configuration (flexible defaults like Wazuh).
 func Default() *Config {
-	trueVal := true
 	return &Config{
 		Agent: AgentConfig{
 			Name:     "",
@@ -194,16 +193,15 @@ func Default() *Config {
 			Group:    "",
 		},
 		Monitor: MonitorConfig{
-			Execve:            &trueVal,
-			EbpfPath:          "",
-			FileEvents:        &trueVal,
-			FileWatchAllPaths: nil,
-			NetworkEvents:     &trueVal,
-			PrivilegeEvents:   &trueVal,
-			ExitEvents:        &trueVal,
-			WriteEvents:       nil, // false = noisy
-			ModuleEvents:      &trueVal,
-			ProcessEvents:     nil, // false = noisy (fork/clone very frequent)
+			Execve:          true,
+			FileEvents:      true,
+			NetworkEvents:   true,
+			PrivilegeEvents: true,
+			ExitEvents:      true,
+			ModuleEvents:    true,
+			// WriteEvents:    false (default — noisy)
+			// ProcessEvents:  false (default — noisy, fork/clone very frequent)
+			// RealtimeAVScan: false (default — adds latency)
 			ProcessSnapshotIntervalSeconds: 60,
 		},
 		Output: OutputConfig{
@@ -211,7 +209,7 @@ func Default() *Config {
 				Enabled: false,
 				Path:    "",
 			},
-			Stderr: &trueVal,
+			Stderr: func() *bool { v := true; return &v }(),
 			Remote: RemoteOutputConfig{
 				Enabled:             false,
 				Address:             "",
@@ -246,63 +244,34 @@ func Default() *Config {
 }
 
 // MonitorExecveEnabled returns whether execve monitoring is on.
-func (c *Config) MonitorExecveEnabled() bool {
-	if c.Monitor.Execve == nil {
-		return true
-	}
-	return *c.Monitor.Execve
-}
+func (c *Config) MonitorExecveEnabled() bool { return c.Monitor.Execve }
 
 // MonitorFileEventsEnabled returns whether file (openat/unlink/rename) monitoring is on.
-func (c *Config) MonitorFileEventsEnabled() bool {
-	if c.Monitor.FileEvents == nil {
-		return true
-	}
-	return *c.Monitor.FileEvents
-}
+func (c *Config) MonitorFileEventsEnabled() bool { return c.Monitor.FileEvents }
 
 // MonitorNetworkEventsEnabled returns whether network (connect/sendto) monitoring is on.
-func (c *Config) MonitorNetworkEventsEnabled() bool {
-	if c.Monitor.NetworkEvents == nil {
-		return true
-	}
-	return *c.Monitor.NetworkEvents
-}
+func (c *Config) MonitorNetworkEventsEnabled() bool { return c.Monitor.NetworkEvents }
 
 // FileWatchAllPaths returns whether to monitor file ops on all paths (true) or only watched paths (false).
-func (c *Config) FileWatchAllPaths() bool {
-	return c.Monitor.FileWatchAllPaths != nil && *c.Monitor.FileWatchAllPaths
-}
+func (c *Config) FileWatchAllPaths() bool { return c.Monitor.FileWatchAllPaths }
 
 // MonitorPrivilegeEventsEnabled returns whether privilege change monitoring is on.
-func (c *Config) MonitorPrivilegeEventsEnabled() bool {
-	return c.Monitor.PrivilegeEvents == nil || *c.Monitor.PrivilegeEvents
-}
+func (c *Config) MonitorPrivilegeEventsEnabled() bool { return c.Monitor.PrivilegeEvents }
 
 // MonitorExitEventsEnabled returns whether process exit monitoring is on.
-func (c *Config) MonitorExitEventsEnabled() bool {
-	return c.Monitor.ExitEvents == nil || *c.Monitor.ExitEvents
-}
+func (c *Config) MonitorExitEventsEnabled() bool { return c.Monitor.ExitEvents }
 
 // MonitorWriteEventsEnabled returns whether write syscall monitoring is on.
-func (c *Config) MonitorWriteEventsEnabled() bool {
-	return c.Monitor.WriteEvents != nil && *c.Monitor.WriteEvents
-}
+func (c *Config) MonitorWriteEventsEnabled() bool { return c.Monitor.WriteEvents }
 
 // MonitorModuleEventsEnabled returns whether kernel module load monitoring is on.
-func (c *Config) MonitorModuleEventsEnabled() bool {
-	return c.Monitor.ModuleEvents == nil || *c.Monitor.ModuleEvents
-}
+func (c *Config) MonitorModuleEventsEnabled() bool { return c.Monitor.ModuleEvents }
 
 // MonitorProcessEventsEnabled returns whether fork/clone/clone3 monitoring is on.
-func (c *Config) MonitorProcessEventsEnabled() bool {
-	return c.Monitor.ProcessEvents != nil && *c.Monitor.ProcessEvents
-}
+func (c *Config) MonitorProcessEventsEnabled() bool { return c.Monitor.ProcessEvents }
 
 // MonitorRealtimeAVScanEnabled returns whether to scan executables on execve.
-func (c *Config) MonitorRealtimeAVScanEnabled() bool {
-	return c.Monitor.RealtimeAVScan != nil && *c.Monitor.RealtimeAVScan
-}
+func (c *Config) MonitorRealtimeAVScanEnabled() bool { return c.Monitor.RealtimeAVScan }
 
 // OutputStderrEnabled returns whether to log alerts to stderr.
 func (c *Config) OutputStderrEnabled() bool {

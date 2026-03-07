@@ -87,17 +87,15 @@ func NewPrivilegeMonitor(objPath string) (*PrivilegeMonitor, error) {
 
 // NewPrivilegeMonitorFromEmbed finds bpf/privilege_events.o and loads.
 func NewPrivilegeMonitorFromEmbed() (*PrivilegeMonitor, error) {
-	for _, p := range []string{"bpf/privilege_events.o", "privilege_events.o"} {
-		if _, err := os.Stat(p); err == nil {
-			return NewPrivilegeMonitor(p)
-		}
-	}
+	candidates := []string{"/usr/lib/edr/bpf/privilege_events.o", "bpf/privilege_events.o", "privilege_events.o"}
 	exe, _ := os.Executable()
 	if exe != "" {
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "bpf/privilege_events.o"), filepath.Join(filepath.Dir(exe), "privilege_events.o")} {
-			if _, err := os.Stat(p); err == nil {
-				return NewPrivilegeMonitor(p)
-			}
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bpf/privilege_events.o"), filepath.Join(exeDir, "privilege_events.o"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return NewPrivilegeMonitor(p)
 		}
 	}
 	return nil, fmt.Errorf("privilege_events.o not found")

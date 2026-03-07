@@ -91,17 +91,15 @@ func NewFileMonitor(objPath string, watchAllPaths bool) (*FileMonitor, error) {
 
 // NewFileMonitorFromEmbed finds bpf/file_events.o and loads. watchAllPaths: false = only watched paths.
 func NewFileMonitorFromEmbed(watchAllPaths bool) (*FileMonitor, error) {
-	for _, p := range []string{"bpf/file_events.o", "file_events.o"} {
-		if _, err := os.Stat(p); err == nil {
-			return NewFileMonitor(p, watchAllPaths)
-		}
-	}
+	candidates := []string{"/usr/lib/edr/bpf/file_events.o", "bpf/file_events.o", "file_events.o"}
 	exe, _ := os.Executable()
 	if exe != "" {
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "bpf/file_events.o"), filepath.Join(filepath.Dir(exe), "file_events.o")} {
-			if _, err := os.Stat(p); err == nil {
-				return NewFileMonitor(p, watchAllPaths)
-			}
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bpf/file_events.o"), filepath.Join(exeDir, "file_events.o"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return NewFileMonitor(p, watchAllPaths)
 		}
 	}
 	return nil, fmt.Errorf("file_events.o not found")

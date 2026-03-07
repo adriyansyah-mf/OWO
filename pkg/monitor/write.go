@@ -78,17 +78,15 @@ func NewWriteMonitor(objPath string) (*WriteMonitor, error) {
 
 // NewWriteMonitorFromEmbed finds bpf/write_events.o and loads.
 func NewWriteMonitorFromEmbed() (*WriteMonitor, error) {
-	for _, p := range []string{"bpf/write_events.o", "write_events.o"} {
-		if _, err := os.Stat(p); err == nil {
-			return NewWriteMonitor(p)
-		}
-	}
+	candidates := []string{"/usr/lib/edr/bpf/write_events.o", "bpf/write_events.o", "write_events.o"}
 	exe, _ := os.Executable()
 	if exe != "" {
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "bpf/write_events.o"), filepath.Join(filepath.Dir(exe), "write_events.o")} {
-			if _, err := os.Stat(p); err == nil {
-				return NewWriteMonitor(p)
-			}
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bpf/write_events.o"), filepath.Join(exeDir, "write_events.o"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return NewWriteMonitor(p)
 		}
 	}
 	return nil, fmt.Errorf("write_events.o not found")

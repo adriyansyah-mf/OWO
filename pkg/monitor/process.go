@@ -89,17 +89,15 @@ func NewProcessMonitor(objPath string) (*ProcessMonitor, error) {
 
 // NewProcessMonitorFromEmbed finds bpf/process_events.o and loads.
 func NewProcessMonitorFromEmbed() (*ProcessMonitor, error) {
-	for _, p := range []string{"bpf/process_events.o", "process_events.o"} {
-		if _, err := os.Stat(p); err == nil {
-			return NewProcessMonitor(p)
-		}
-	}
+	candidates := []string{"/usr/lib/edr/bpf/process_events.o", "bpf/process_events.o", "process_events.o"}
 	exe, _ := os.Executable()
 	if exe != "" {
-		for _, p := range []string{filepath.Join(filepath.Dir(exe), "bpf/process_events.o"), filepath.Join(filepath.Dir(exe), "process_events.o")} {
-			if _, err := os.Stat(p); err == nil {
-				return NewProcessMonitor(p)
-			}
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, "bpf/process_events.o"), filepath.Join(exeDir, "process_events.o"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return NewProcessMonitor(p)
 		}
 	}
 	return nil, fmt.Errorf("process_events.o not found")
