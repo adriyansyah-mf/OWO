@@ -832,6 +832,28 @@ func main() {
 					norm := buildNorm(&env)
 					matched := sigmaEng.Eval(norm)
 					logToStderr = len(matched) > 0
+					if len(matched) > 0 && natsConn != nil {
+						tenant := cfg.Output.Nats.TenantID
+						if tenant == "" {
+							tenant = "default"
+						}
+						for _, rule := range matched {
+							alertJSON, _ := json.Marshal(map[string]interface{}{
+								"id":         "alt-" + strconv.FormatInt(time.Now().UnixNano()/1e6, 10),
+								"tenant_id":  tenant,
+								"host_id":    cfg.Agent.Hostname,
+								"rule_id":    rule.ID,
+								"rule_name":  rule.Name,
+								"severity":   rule.Severity,
+								"title":      rule.Name,
+								"message":    fmt.Sprintf("Sigma rule matched: pid=%d cmd=%s", ev.Pid, cmdline),
+								"event_json": evMap,
+								"created_at": time.Now().UTC(),
+							})
+							_ = natsConn.Publish("alerts", alertJSON)
+							logger.Warn("[SIGMA] rule=%s severity=%s pid=%d %s", rule.Name, rule.Severity, ev.Pid, cmdline)
+						}
+					}
 				}
 				_ = exporter.WriteEvent(eventJSON, logToStderr)
 			}

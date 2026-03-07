@@ -92,10 +92,6 @@ func parseSelection(sel interface{}) *detection.Condition {
 		if k == "condition" {
 			continue
 		}
-		valStr, ok := v.(string)
-		if !ok {
-			continue
-		}
 		parts := strings.SplitN(k, "|", 2)
 		field := parts[0]
 		modifier := "contains"
@@ -103,11 +99,31 @@ func parseSelection(sel interface{}) *detection.Condition {
 			modifier = strings.TrimSpace(parts[1])
 		}
 		ecsField := mapField(field)
-		children = append(children, detection.Condition{
-			Op:    modifier,
-			Field: ecsField,
-			Value: valStr,
-		})
+		switch val := v.(type) {
+		case string:
+			children = append(children, detection.Condition{
+				Op:    modifier,
+				Field: ecsField,
+				Value: val,
+			})
+		case []interface{}:
+			// List value → OR of all string values for this field
+			var orChildren []detection.Condition
+			for _, item := range val {
+				if s, ok := item.(string); ok {
+					orChildren = append(orChildren, detection.Condition{
+						Op:    modifier,
+						Field: ecsField,
+						Value: s,
+					})
+				}
+			}
+			if len(orChildren) == 1 {
+				children = append(children, orChildren[0])
+			} else if len(orChildren) > 1 {
+				children = append(children, detection.Condition{Op: "or", Children: orChildren})
+			}
+		}
 	}
 	if len(children) == 0 {
 		return nil
@@ -118,7 +134,7 @@ func parseSelection(sel interface{}) *detection.Condition {
 	return &detection.Condition{Op: "and", Children: children}
 }
 
-// parseCondition parses "1 of selection*" or "selection" etc.
+// parseCondition parses "1 of selection*", "selection or selection_i", "selection" etc.
 func parseCondition(det map[string]interface{}, condStr string) *detection.Condition {
 	condStr = strings.TrimSpace(condStr)
 	// "1 of selection*" -> OR of selection, selection_ncat, ...
@@ -153,6 +169,48 @@ func parseCondition(det map[string]interface{}, condStr string) *detection.Condi
 			return &children[0]
 		}
 		return &detection.Condition{Op: "or", Children: children}
+	}
+	// "A or B or C" -> OR of named selections
+	if strings.Contains(condStr, " or ") {
+		parts := strings.Split(condStr, " or ")
+		var children []detection.Condition
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if sel, ok := det[p]; ok {
+				c := parseSelection(sel)
+				if c != nil {
+					children = append(children, *c)
+				}
+			}
+		}
+		if len(children) == 0 {
+			return nil
+		}
+		if len(children) == 1 {
+			return &children[0]
+		}
+		return &detection.Condition{Op: "or", Children: children}
+	}
+	// "A and B and C" -> AND of named selections
+	if strings.Contains(condStr, " and ") {
+		parts := strings.Split(condStr, " and ")
+		var children []detection.Condition
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if sel, ok := det[p]; ok {
+				c := parseSelection(sel)
+				if c != nil {
+					children = append(children, *c)
+				}
+			}
+		}
+		if len(children) == 0 {
+			return nil
+		}
+		if len(children) == 1 {
+			return &children[0]
+		}
+		return &detection.Condition{Op: "and", Children: children}
 	}
 	// single selection name
 	if sel, ok := det[condStr]; ok {

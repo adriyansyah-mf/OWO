@@ -51,6 +51,10 @@ contents:
   - src: bpf/process_events.o
     dst: /usr/lib/edr/bpf/process_events.o
 
+  # Sigma detection rules
+  - src: sigma/rules/
+    dst: /usr/lib/edr/sigma/rules/
+
   # Systemd service unit
   - src: deploy/edr-client.service
     dst: /usr/lib/systemd/system/edr-client.service

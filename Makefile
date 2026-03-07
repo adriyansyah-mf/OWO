@@ -87,6 +87,7 @@ package-tar: all
 	tar -czf $(DIST_DIR)/edr-client_$(VERSION)_$(ARCH).tar.gz \
 		bin/edr-client \
 		bpf/*.o \
+		sigma/rules/ \
 		deploy/edr-client.service \
 		deploy/edr.yaml.example \
 		deploy/scripts/postinstall.sh \

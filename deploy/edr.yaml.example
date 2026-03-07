@@ -26,6 +26,9 @@ monitor:
 
   # file_watch_all_paths: false  # true = watch all paths (noisy); false = only /etc,/bin,/tmp,etc.
 
+  # Path to Sigma detection rules directory (optional — generates alerts on match)
+  sigma_rules_path: /usr/lib/edr/sigma/rules
+
   # Path to local GTFOBins data (optional — enriches process alerts)
   # gtfobins_path: /usr/lib/edr/gtfobins.json
 
