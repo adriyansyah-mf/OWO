@@ -1,7 +1,101 @@
-# .github/workflows/build.yml
-- uses: actions/checkout@v4
-- name: Build
-  run: |
-    sudo apt install -y clang llvm linux-headers-$(uname -r) golang-go
-    make all
-    make package-deb
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(cat VERSION)"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "TAG=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm make \
+            linux-headers-$(uname -r) \
+            linux-tools-$(uname -r) \
+            libbpf-dev libelf-dev
+
+      - name: Build eBPF objects
+        run: make bpf
+
+      - name: Build Go binary
+        run: |
+          mkdir -p bin
+          VERSION=${{ steps.version.outputs.VERSION }} make go
+
+      - name: Install nFPM
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Build packages
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }} make package-deb
+          VERSION=${{ steps.version.outputs.VERSION }} make package-rpm
+          VERSION=${{ steps.version.outputs.VERSION }} make package-tar
+
+      - name: List dist/
+        run: ls -lh dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: "OWO EDR ${{ steps.version.outputs.TAG }}"
+          body: |
+            ## OWO EDR Agent ${{ steps.version.outputs.TAG }}
+
+            ### Quick Install
+
+            **Debian / Ubuntu:**
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG }}/install.sh | \
+              sudo NATS_URL=nats://your-server:4222 sh
+            ```
+
+            **Manual .deb:**
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG }}/edr-client_${{ steps.version.outputs.VERSION }}_amd64.deb
+            sudo dpkg -i edr-client_${{ steps.version.outputs.VERSION }}_amd64.deb
+            ```
+
+            **Manual .rpm:**
+            ```bash
+            sudo rpm -Uvh https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG }}/edr-client_${{ steps.version.outputs.VERSION }}_amd64.rpm
+            ```
+          files: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            scripts/install.sh
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          generate_release_notes: true
