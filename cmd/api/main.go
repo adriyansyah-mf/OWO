@@ -1297,7 +1297,10 @@ func handleRulesList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if nc != nil {
-			nc.Publish("detection.reload", []byte("reload"))
+			if p, err := json.Marshal(map[string]string{"action": "upsert", "filename": filename, "content": body.Yaml}); err == nil {
+				nc.Publish("rules.default", p) //nolint:errcheck
+			}
+			nc.Publish("detection.reload", []byte("reload")) //nolint:errcheck
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1351,7 +1354,10 @@ func handleRulesByID(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if nc != nil {
-					nc.Publish("detection.reload", []byte("reload"))
+					if p, err := json.Marshal(map[string]string{"action": "delete", "filename": e.Name()}); err == nil {
+						nc.Publish("rules.default", p) //nolint:errcheck
+					}
+					nc.Publish("detection.reload", []byte("reload")) //nolint:errcheck
 				}
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"deleted": ruleID})

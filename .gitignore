@@ -22,3 +22,4 @@ frontend/.next/
 
 # Data files (runtime, not source)
 data/
+.claude/settings.local.json
