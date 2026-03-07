@@ -2,10 +2,10 @@
 # OWO EDR Agent — one-line installer
 #
 # Usage (minimal):
-#   curl -fsSL https://your-server/install.sh | sudo sh
+#   curl -fsSL https://github.com/adriyansyah-mf/OWO/releases/latest/download/install.sh | sudo sh
 #
 # Usage (with config):
-#   curl -fsSL https://your-server/install.sh | \
+#   curl -fsSL https://github.com/adriyansyah-mf/OWO/releases/latest/download/install.sh | \
 #     sudo NATS_URL=nats://10.0.0.1:4222 \
 #          TENANT_ID=acme \
 #          EDR_GROUP=servers \
@@ -27,7 +27,7 @@ NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
 TENANT_ID="${TENANT_ID:-default}"
 EDR_GROUP="${EDR_GROUP:-}"
 EDR_VERSION="${EDR_VERSION:-latest}"
-RELEASE_URL="${RELEASE_URL:-https://github.com/your-org/owo-edr/releases/download}"
+RELEASE_URL="${RELEASE_URL:-https://github.com/adriyansyah-mf/OWO/releases/download}"
 SKIP_START="${SKIP_START:-0}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -112,8 +112,10 @@ case "$OS_ID" in
         esac;;
 esac
 
-PKG_FILE="edr-client_${EDR_VERSION}_${PKG_ARCH}.${PKG_TYPE}"
-PKG_URL="${RELEASE_URL}/${EDR_VERSION}/${PKG_FILE}"
+# nFPM uses bare version numbers (no 'v' prefix) for package filenames
+PKG_VERSION="${EDR_VERSION#v}"
+PKG_FILE="edr-client_${PKG_VERSION}_${PKG_ARCH}.${PKG_TYPE}"
+PKG_URL="${RELEASE_URL}/v${PKG_VERSION}/${PKG_FILE}"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT

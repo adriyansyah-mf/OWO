@@ -264,26 +264,46 @@ export default function Dashboard() {
             <span className="card-title">Attack Telemetry (7d)</span>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Detections per day</span>
           </div>
-          <div className="chart-area">
-            <div className="sparkline">
-              {[35, 55, 40, 75, 60, 90, 70].map((h, i) => (
-                <div key={i} className="spark-bar" style={{ height: `${h}%`, background: i === 5 ? 'var(--red)' : i === 6 ? 'var(--yellow)' : 'var(--accent-dark)', animationDelay: `${0.1 + i * 0.05}s` }} />
-              ))}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '0 18px 16px', marginTop: 4 }}>
-            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, padding: '10px 12px' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Peak Day</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--red)' }}>Sat · 342</div>
-            </div>
-            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, padding: '10px 12px' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Auto-blocked</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--green)' }}>98.7%</div>
-            </div>
-          </div>
+          {(() => {
+            const days = Array.from({ length: 7 }, (_, i) => {
+              const d = new Date(); d.setDate(d.getDate() - (6 - i)); return d.toISOString().slice(0, 10);
+            });
+            const counts = days.map(day => alerts.filter((a: any) => (a.created_at || '').slice(0, 10) === day).length);
+            const max = Math.max(...counts, 1);
+            const peakIdx = counts.indexOf(Math.max(...counts));
+            const DAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            const peakLabel = DAY[new Date(days[peakIdx]).getDay()];
+            const total7d = counts.reduce((s, c) => s + c, 0);
+            if (total7d === 0) return (
+              <div style={{ padding: '24px 18px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                No detections in the last 7 days
+              </div>
+            );
+            return (
+              <>
+                <div className="chart-area">
+                  <div className="sparkline">
+                    {counts.map((c, i) => (
+                      <div key={i} className="spark-bar" style={{ height: `${Math.round((c / max) * 100)}%`, background: i === peakIdx ? 'var(--red)' : 'var(--accent-dark)', animationDelay: `${0.1 + i * 0.05}s` }} />
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                    {days.map((d, i) => <span key={i}>{DAY[new Date(d).getDay()]}</span>)}
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '0 18px 16px', marginTop: 4 }}>
+                  <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Peak Day</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--red)' }}>{peakLabel} · {counts[peakIdx]}</div>
+                  </div>
+                  <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Total (7d)</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--yellow)' }}>{total7d}</div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         <div className="card" style={{ animationDelay: '0.4s' }}>
