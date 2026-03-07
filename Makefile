@@ -57,7 +57,7 @@ bpf/module_events.o: bpf/module_events.c
 bpf/process_events.o: bpf/process_events.c
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
-VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0")
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo "0.1.0")
 
 go:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/edr-client ./cmd/edr-client
