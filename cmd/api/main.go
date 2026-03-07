@@ -2014,7 +2014,7 @@ func handleThreatIntelIOCs(w http.ResponseWriter, r *http.Request) {
 		severity := r.URL.Query().Get("severity")
 		source := r.URL.Query().Get("source")
 		query := r.URL.Query().Get("q")
-		list := iocStore.List(iocType, severity, source, query)
+		list := iocStore.List(threatintel.IOCType(iocType), severity, source, query)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(list)
 	case http.MethodPost:

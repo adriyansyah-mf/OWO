@@ -490,20 +490,20 @@ export default function HuntPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium text-white">{String(hit.title ?? '(no title)')}</span>
-                              {hit.rule_id && (
+                              {!!hit.rule_id && (
                                 <span className="text-xs text-gray-500 font-mono">{String(hit.rule_id)}</span>
                               )}
                             </div>
                             <div className="text-sm text-gray-400 mt-0.5 truncate">{String(hit.message ?? '')}</div>
                             <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 flex-wrap">
-                              {hit.host_id && <span>Host: <span className="text-gray-300">{String(hit.host_id)}</span></span>}
-                              {hit.tenant_id && <span>Tenant: <span className="text-gray-300">{String(hit.tenant_id)}</span></span>}
-                              {hit.attack_chain && (
+                              {!!hit.host_id && <span>Host: <span className="text-gray-300">{String(hit.host_id)}</span></span>}
+                              {!!hit.tenant_id && <span>Tenant: <span className="text-gray-300">{String(hit.tenant_id)}</span></span>}
+                              {!!hit.attack_chain && (
                                 <span className="bg-purple-900 text-purple-200 px-1.5 py-0.5 rounded">
                                   {String(hit.attack_chain)}
                                 </span>
                               )}
-                              {hit.created_at && (
+                              {!!hit.created_at && (
                                 <span>{new Date(String(hit.created_at)).toLocaleString()}</span>
                               )}
                             </div>

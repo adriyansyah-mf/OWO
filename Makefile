@@ -18,7 +18,7 @@ BPF_ARCH           := $(or $(BPF_ARCH),$(ARCH))
 # BPF sources only use libbpf headers (<bpf/bpf_helpers.h>, <linux/bpf.h>).
 # No kernel source tree required — libbpf-dev provides all needed headers.
 SYS_ARCH_INC ?= /usr/include/$(ARCH)-linux-gnu
-BPF_CFLAGS  := -O2 -g -target bpf -D__TARGET_ARCH_$(BPF_ARCH) \
+BPF_CFLAGS  := -O2 -target bpf -D__TARGET_ARCH_$(BPF_ARCH) \
 	-I $(SYS_ARCH_INC) \
 	-I /usr/include \
 	-I $(CURDIR)/bpf/include \
