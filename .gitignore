@@ -1,7 +1,24 @@
+# Compiled binaries
 /bin/
+/api
+/edr-client
+/dist/
+
+# eBPF objects
 bpf/*.o
 *.o
+
+# Go test artifacts
 *.test
 coverage.out
+
+# Editor
 .vscode/
 .idea/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Data files (runtime, not source)
+data/
