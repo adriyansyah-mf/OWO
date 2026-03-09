@@ -787,6 +787,65 @@ func main() {
 			comm := strings.TrimRight(string(ev.Comm[:]), "\x00")
 			path := sanitizePath(string(ev.Filename[:]))
 
+			// ── Early sigma evaluation (race-free) ───────────────────────────
+			// Run sigma BEFORE any /proc reads or SHA256 so detection fires even
+			// when the process exits in <1ms (nc TIMEOUT / ECONNREFUSED).
+			// Uses only data captured by eBPF at syscall time.
+			{
+				sigmaEngMu.RLock()
+				earlyEng := sigmaEng
+				sigmaEngMu.RUnlock()
+				if earlyEng != nil && natsConn != nil {
+					ebpfCmdline := strings.TrimRight(string(ev.Cmdline[:]), "\x00")
+					if ebpfCmdline == "" {
+						ebpfCmdline = comm
+					}
+					ebpfExe := path
+					if ebpfExe == "" || ebpfExe == "-" {
+						ebpfExe = comm
+					}
+					earlyEnv := events.AgentEnvelope{
+						AgentHost: cfg.Agent.Hostname,
+						AgentName: cfg.Agent.Name,
+						Event: events.RawEvent{
+							EventType: "execve",
+							Timestamp: ts,
+							Pid:       ev.Pid,
+							Comm:      comm,
+							Exe:       ebpfExe,
+							Cmdline:   ebpfCmdline,
+							Uid:       ev.Uid,
+						},
+					}
+					if earlyMatched := earlyEng.Eval(buildNorm(&earlyEnv)); len(earlyMatched) > 0 {
+						tenant := cfg.Output.Nats.TenantID
+						if tenant == "" {
+							tenant = "default"
+						}
+						for _, rule := range earlyMatched {
+							alertJSON, _ := json.Marshal(map[string]interface{}{
+								"id":        fmt.Sprintf("alt-%d-%d", ev.Pid, ts.UnixNano()),
+								"tenant_id": tenant,
+								"host_id":   cfg.Agent.Hostname,
+								"rule_id":   rule.ID,
+								"rule_name": rule.Name,
+								"severity":  rule.Severity,
+								"title":     rule.Name,
+								"mitre":     rule.Mitre,
+								"message":   fmt.Sprintf("Sigma rule matched: pid=%d cmd=%s", ev.Pid, ebpfCmdline),
+								"event_json": map[string]interface{}{
+									"event_type": "execve", "pid": ev.Pid,
+									"exe": ebpfExe, "cmdline": ebpfCmdline, "comm": comm,
+								},
+								"created_at": ts,
+							})
+							_ = natsConn.Publish("alerts", alertJSON)
+							logger.Warn("[SIGMA] rule=%s severity=%s pid=%d %s", rule.Name, rule.Severity, ev.Pid, ebpfCmdline)
+						}
+					}
+				}
+			}
+
 			ppid := ev.Ppid
 			if ppid == 0 {
 				ppid = proc.PpidFromStat(ev.Pid)
@@ -885,73 +944,7 @@ func main() {
 					}
 				}
 				eventJSON, _ := json.Marshal(evMap)
-				logToStderr := true
-				sigmaEngMu.RLock()
-				curEng := sigmaEng
-				sigmaEngMu.RUnlock()
-				if curEng != nil {
-					// Gunakan path dari eBPF (ev.Filename) sebagai fallback untuk Exe: proc.Exe()
-					// sering kosong karena nc/sh exit cepat (connection refused) sebelum kita baca /proc.
-					exeForSigma := exe
-					if exeForSigma == "" || exeForSigma == "-" {
-						exeForSigma = path
-					}
-					var mitre, gtfobinsFns []string
-					if gtfobinsDB != nil {
-						binName := gtfobins.BinaryNameFromPath(exeForSigma)
-						if binName == "" {
-							binName = gtfobins.BinaryNameFromPath(path)
-						}
-						gtfobinsFns = gtfobinsDB.Lookup(binName)
-						mitre = gtfobinsDB.LookupMITRE(binName)
-					}
-					env := events.AgentEnvelope{
-						AgentHost: cfg.Agent.Hostname,
-						AgentName: cfg.Agent.Name,
-						Event: events.RawEvent{
-							EventType:   "execve",
-							Timestamp:  ts,
-							Pid:         ev.Pid,
-							Ppid:        ppid,
-							Comm:        comm,
-							Exe:         exeForSigma,
-							Cmdline:     cmdline,
-							Uid:         ev.Uid,
-							Gid:         ev.Gid,
-							ParentPath:  parentPath,
-							ParentCmd:   parentCmdline,
-							SHA256:      enrichCtx.SHA256,
-							MitreAttck:  mitre,
-							GTFOBins:    gtfobinsFns,
-						},
-					}
-					norm := buildNorm(&env)
-					matched := curEng.Eval(norm)
-					logToStderr = len(matched) > 0
-					if len(matched) > 0 && natsConn != nil {
-						tenant := cfg.Output.Nats.TenantID
-						if tenant == "" {
-							tenant = "default"
-						}
-						for _, rule := range matched {
-							alertJSON, _ := json.Marshal(map[string]interface{}{
-								"id":         "alt-" + strconv.FormatInt(time.Now().UnixNano()/1e6, 10),
-								"tenant_id":  tenant,
-								"host_id":    cfg.Agent.Hostname,
-								"rule_id":    rule.ID,
-								"rule_name":  rule.Name,
-								"severity":   rule.Severity,
-								"title":      rule.Name,
-								"message":    fmt.Sprintf("Sigma rule matched: pid=%d cmd=%s", ev.Pid, cmdline),
-								"event_json": evMap,
-								"created_at": time.Now().UTC(),
-							})
-							_ = natsConn.Publish("alerts", alertJSON)
-							logger.Warn("[SIGMA] rule=%s severity=%s pid=%d %s", rule.Name, rule.Severity, ev.Pid, cmdline)
-						}
-					}
-				}
-				_ = exporter.WriteEvent(eventJSON, logToStderr)
+				_ = exporter.WriteEvent(eventJSON, false)
 			}
 		}
 	}
