@@ -132,17 +132,11 @@ export default function AlertsPage() {
 
   // Find the most recent ready artifact key for a given host
   const getReadyArtifactForHost = (hostID: string) => {
-    for (const key of readyArtifacts) {
-      if (key.startsWith(`${hostID}:`)) return key;
-    }
-    return null;
+    return Array.from(readyArtifacts).find(key => key.startsWith(`${hostID}:`)) ?? null;
   };
 
   const getCollectingKeyForHost = (hostID: string) => {
-    for (const key of Object.keys(collecting)) {
-      if (key.startsWith(`${hostID}:`)) return key;
-    }
-    return null;
+    return Object.keys(collecting).find(key => key.startsWith(`${hostID}:`)) ?? null;
   };
 
   const severityPill = (sev: string) => {
