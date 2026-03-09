@@ -91,6 +91,14 @@ func normalize(env *events.AgentEnvelope) *events.NormalizedEvent {
 			"pid": ev.Pid, "ppid": ev.Ppid, "exe": ev.Exe, "cmdline": ev.Cmdline,
 		},
 	}
+	if ev.EventType == "file" && (ev.Path != "" || ev.FilePath != "") {
+		path := ev.Path
+		if path == "" {
+			path = ev.FilePath
+		}
+		norm.File = &events.FileInfo{Path: path}
+		norm.Raw["file_path"] = path
+	}
 	if ev.SHA256 != "" {
 		norm.Process.Hash = &events.HashInfo{SHA256: ev.SHA256}
 	}

@@ -314,14 +314,26 @@ func main() {
 					tid = "default"
 				}
 				if hid != "" {
-					storePg.UpsertHost(ctx, tid, hid, hid, "")
+					if err := storePg.UpsertHost(ctx, tid, hid, hid, ""); err != nil {
+						log.Printf("alerts: UpsertHost hid=%s tid=%s: %v", hid, tid, err)
+					}
 					sev, _ := a["severity"].(string)
 					title, _ := a["title"].(string)
 					msg, _ := a["message"].(string)
 					ruleID, _ := a["rule_id"].(string)
 					evJSON, _ := a["event_json"].(map[string]interface{})
-					mitre, _ := a["mitre"].([]string)
-					storePg.InsertAlert(ctx, tid, hid, ruleID, sev, title, msg, evJSON, mitre)
+					// mitre from JSON unmarshal is []interface{}, not []string
+					var mitre []string
+					if raw, ok := a["mitre"].([]interface{}); ok {
+						for _, v := range raw {
+							if s, ok := v.(string); ok {
+								mitre = append(mitre, s)
+							}
+						}
+					}
+					if err := storePg.InsertAlert(ctx, tid, hid, ruleID, sev, title, msg, evJSON, mitre); err != nil {
+						log.Printf("alerts: InsertAlert hid=%s tid=%s title=%q: %v", hid, tid, title, err)
+					}
 					storePg.ComputeAndUpdateRiskScore(ctx, hid)
 				}
 			}

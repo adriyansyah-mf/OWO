@@ -28,9 +28,11 @@ type SigmaRule struct {
 
 // sigmaFieldMap maps Sigma field names to ECS/normalized field names.
 var sigmaFieldMap = map[string]string{
-	"CommandLine": "process.command_line",
-	"Image":       "process.executable",
-	"ParentImage": "process.parent.executable",
+	"CommandLine":   "process.command_line",
+	"Image":         "process.executable",
+	"ParentImage":   "process.parent.executable",
+	"TargetFilename": "file.path",
+	"FilePath":      "file.path",
 }
 
 func mapField(sigmaField string) string {
