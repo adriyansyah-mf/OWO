@@ -101,7 +101,7 @@ export default function Sidebar({
           All Endpoints
           {hostsCount != null && hostsCount > 0 && <span className="nav-badge blue">{hostsCount}</span>}
         </Link>
-        <Link href="/" className="nav-item">
+        <Link href="/live-activity" className={`nav-item ${navActive('/live-activity') ? 'active' : ''}`}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M12 8v4l3 3"/></svg>
           Live Activity
         </Link>

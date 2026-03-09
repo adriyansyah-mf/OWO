@@ -80,6 +80,11 @@ var (
 	alertsMu         sync.RWMutex
 	alertStreamChans []chan []byte
 	alertStreamMu    sync.RWMutex
+	// live activity (raw events from agents)
+	liveEventsMem      []map[string]interface{}
+	liveEventsMu       sync.RWMutex
+	liveStreamChans    []chan []byte
+	liveStreamMu       sync.RWMutex
 	avScanResults    []map[string]interface{}
 	avScanMu        sync.RWMutex
 	dlpScanResults  []map[string]interface{}
@@ -392,6 +397,20 @@ func main() {
 			}
 			dlpScanMu.Unlock()
 		})
+		// Raw events from all agents — for Live Activity
+		nc.Subscribe("events.*", func(m *nats.Msg) { //nolint:errcheck
+			var env map[string]interface{}
+			if json.Unmarshal(m.Data, &env) != nil {
+				return
+			}
+			liveEventsMu.Lock()
+			liveEventsMem = append(liveEventsMem, env)
+			if len(liveEventsMem) > 500 {
+				liveEventsMem = liveEventsMem[len(liveEventsMem)-500:]
+			}
+			liveEventsMu.Unlock()
+			broadcastLiveEvent(env)
+		})
 	}
 
 	mux := http.NewServeMux()
@@ -403,6 +422,7 @@ func main() {
 	// Alerts
 	mux.HandleFunc("/api/v1/alerts", cors(requirePerm(rbac.PermReadAlerts, handleAlerts)))
 	mux.HandleFunc("/api/v1/alerts/stream", cors(requirePerm(rbac.PermReadAlerts, handleAlertsStream)))
+	mux.HandleFunc("/api/v1/live-activity", cors(requirePerm(rbac.PermReadAlerts, handleLiveActivityStream)))
 	// Hosts
 	mux.HandleFunc("/api/v1/hosts", cors(requirePerm(rbac.PermReadHosts, handleHosts)))
 	mux.HandleFunc("/api/v1/hosts/", cors(requirePerm(rbac.PermReadHosts, handleHostByID)))
@@ -587,6 +607,72 @@ func broadcastAlert(a map[string]interface{}) {
 		case ch <- b:
 		default:
 			// client slow, skip
+		}
+	}
+}
+
+func broadcastLiveEvent(ev map[string]interface{}) {
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	liveStreamMu.RLock()
+	chans := make([]chan []byte, len(liveStreamChans))
+	copy(chans, liveStreamChans)
+	liveStreamMu.RUnlock()
+	for _, ch := range chans {
+		select {
+		case ch <- b:
+		default:
+		}
+	}
+}
+
+func handleLiveActivityStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	ch := make(chan []byte, 64)
+	liveStreamMu.Lock()
+	liveStreamChans = append(liveStreamChans, ch)
+	liveStreamMu.Unlock()
+	defer func() {
+		liveStreamMu.Lock()
+		for i, c := range liveStreamChans {
+			if c == ch {
+				liveStreamChans = append(liveStreamChans[:i], liveStreamChans[i+1:]...)
+				break
+			}
+		}
+		liveStreamMu.Unlock()
+		close(ch)
+	}()
+	// Send recent events as initial batch
+	liveEventsMu.RLock()
+	snapshot := make([]map[string]interface{}, len(liveEventsMem))
+	copy(snapshot, liveEventsMem)
+	liveEventsMu.RUnlock()
+	for _, ev := range snapshot {
+		if b, err := json.Marshal(ev); err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", b)
+		}
+	}
+	flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case data, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
 		}
 	}
 }
@@ -2634,6 +2720,7 @@ func cors(h http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Cache-Control", "no-store")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
