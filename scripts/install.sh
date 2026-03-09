@@ -147,6 +147,33 @@ fi
 # Ensure ebpf_path points to the package-installed .o files
 sed -i 's|# ebpf_path: /usr/lib/edr/bpf|ebpf_path: /usr/lib/edr/bpf|' /etc/edr/edr.yaml
 
+# ── ClamAV ───────────────────────────────────────────────────────────────────
+if command -v clamscan >/dev/null 2>&1; then
+    ok "ClamAV already installed: $(clamscan --version 2>/dev/null | head -1)"
+else
+    info "Installing ClamAV..."
+    case "$PKG_TYPE" in
+        deb)
+            DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-daemon 2>/dev/null || \
+                warn "ClamAV install failed — retry manually: apt install clamav clamav-daemon"
+            if command -v freshclam >/dev/null 2>&1; then
+                info "Updating ClamAV virus database (freshclam)..."
+                freshclam 2>/dev/null || true
+            fi
+            ;;
+        rpm)
+            dnf install -y clamav clamav-update 2>/dev/null || \
+            yum install -y clamav clamav-update 2>/dev/null || \
+                warn "ClamAV install failed — retry manually: dnf install clamav clamav-update"
+            ;;
+    esac
+    if command -v clamscan >/dev/null 2>&1; then
+        ok "ClamAV installed: $(clamscan --version 2>/dev/null | head -1)"
+    else
+        warn "ClamAV not installed — AV scan will be unavailable until installed manually"
+    fi
+fi
+
 # ── Start ─────────────────────────────────────────────────────────────────────
 if [ "$SKIP_START" != "1" ]; then
     info "Enabling and starting edr-client service..."
