@@ -99,6 +99,15 @@ func main() {
 	}
 	logger.SetLevel(cfg.Logging.Level)
 
+	// Auto-install ClamAV in background so it's ready before the first scan request.
+	go func() {
+		if clamav.EnsureInstalled() {
+			logger.Info("clamav: ready")
+		} else {
+			logger.Warn("clamav: auto-install failed — AV scan will retry on demand")
+		}
+	}()
+
 	var gtfobinsDB *gtfobins.DB
 	if cfg.Monitor.GTFOBinsPath != "" {
 		var err error
