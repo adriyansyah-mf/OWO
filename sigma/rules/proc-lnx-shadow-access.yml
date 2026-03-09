@@ -1,0 +1,27 @@
+title: Credential File Access (shadow/passwd dump)
+id: proc-lnx-shadow-access
+status: experimental
+description: Detects reading /etc/shadow or dumping /etc/passwd via common tools (credential harvesting)
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_shadow:
+    CommandLine|contains: '/etc/shadow'
+  selection_passwd_dump:
+    CommandLine|contains: '/etc/passwd'
+    Image|endswith:
+      - '/cat'
+      - '/cp'
+      - '/base64'
+      - '/xxd'
+      - '/od'
+  selection_unshadow:
+    Image|endswith: '/unshadow'
+  condition: selection_shadow or selection_passwd_dump or selection_unshadow
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003

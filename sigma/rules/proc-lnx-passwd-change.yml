@@ -1,0 +1,25 @@
+title: Suspicious Password Change
+id: proc-lnx-passwd-change
+status: experimental
+description: Detects passwd/chpasswd being called on accounts other than the current user (lateral movement / account takeover)
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_chpasswd:
+    Image|endswith: '/chpasswd'
+  selection_usermod_pass:
+    Image|endswith: '/usermod'
+    CommandLine|contains: '-p '
+  selection_passwd_other:
+    Image|endswith: '/passwd'
+    CommandLine|contains:
+      - 'root'
+      - '--stdin'
+  condition: 1 of selection*
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098

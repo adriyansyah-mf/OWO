@@ -1,0 +1,33 @@
+title: Crontab Persistence
+id: proc-lnx-crontab-persistence
+status: experimental
+description: Detects writing cron jobs via crontab or directly to cron directories (persistence technique)
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_crontab_edit:
+    Image|endswith: '/crontab'
+    CommandLine|contains: '-e'
+  selection_crontab_replace:
+    Image|endswith: '/crontab'
+    CommandLine|contains:
+      - '/tmp'
+      - '/dev/shm'
+  selection_tee_cron:
+    Image|endswith: '/tee'
+    CommandLine|contains:
+      - '/etc/cron'
+      - '/var/spool/cron'
+  selection_write_cron:
+    CommandLine|contains:
+      - '/etc/cron.d/'
+      - '/etc/cron.daily/'
+      - '/etc/cron.hourly/'
+  condition: 1 of selection*
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1053

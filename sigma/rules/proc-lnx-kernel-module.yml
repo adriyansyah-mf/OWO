@@ -1,0 +1,23 @@
+title: Kernel Module Load (Rootkit)
+id: proc-lnx-kernel-module
+status: experimental
+description: Detects loading of kernel modules via insmod or modprobe which may indicate rootkit installation
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_insmod:
+    Image|endswith: '/insmod'
+  selection_modprobe_custom:
+    Image|endswith: '/modprobe'
+    CommandLine|contains:
+      - '/tmp'
+      - '/dev/shm'
+      - '/var/tmp'
+  condition: selection_insmod or selection_modprobe_custom
+level: critical
+tags:
+  - attack.defense_evasion
+  - attack.t1547

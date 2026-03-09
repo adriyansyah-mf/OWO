@@ -1,0 +1,32 @@
+title: Data Exfiltration via Network Tool
+id: proc-lnx-data-exfil
+status: experimental
+description: Detects suspicious data exfiltration using curl/wget to send local files or /etc contents to external endpoints
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_curl_upload:
+    Image|endswith: '/curl'
+    CommandLine|contains:
+      - ' -F '
+      - ' --data-binary'
+      - ' --data @'
+      - ' -T '
+  selection_curl_shadow:
+    Image|endswith: '/curl'
+    CommandLine|contains:
+      - '/etc/shadow'
+      - '/etc/passwd'
+      - '/root/'
+      - '/.ssh/'
+  selection_wget_post:
+    Image|endswith: '/wget'
+    CommandLine|contains: '--post-file'
+  condition: selection_curl_upload or selection_curl_shadow or selection_wget_post
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1041

@@ -1,0 +1,24 @@
+title: Base64 Encoded Payload Execution
+id: proc-lnx-base64-exec
+status: experimental
+description: Detects base64-encoded payload decoding piped to a shell (obfuscated execution)
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_base64_decode:
+    Image|endswith: '/base64'
+    CommandLine|contains: '-d'
+  selection_base64_decode_alt:
+    Image|endswith: '/base64'
+    CommandLine|contains: '--decode'
+  selection_openssl_b64:
+    Image|endswith: '/openssl'
+    CommandLine|contains: 'base64'
+  condition: 1 of selection*
+level: medium
+tags:
+  - attack.defense_evasion
+  - attack.t1027

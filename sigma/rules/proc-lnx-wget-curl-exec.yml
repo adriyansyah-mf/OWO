@@ -1,0 +1,31 @@
+title: Download and Execute via wget/curl
+id: proc-lnx-wget-curl-exec
+status: experimental
+description: Detects piping wget/curl output directly to a shell interpreter (fileless execution)
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_sh_stdin:
+    Image|endswith:
+      - '/sh'
+      - '/bash'
+      - '/dash'
+    CommandLine|contains: 'stdin'
+  selection_curl_pipe:
+    CommandLine|contains:
+      - 'curl -s'
+      - 'curl -fsSL'
+      - 'curl -o -'
+  selection_wget_pipe:
+    CommandLine|contains:
+      - 'wget -q -O -'
+      - 'wget -O-'
+      - 'wget -qO-'
+  condition: selection_sh_stdin or selection_curl_pipe or selection_wget_pipe
+level: medium
+tags:
+  - attack.execution
+  - attack.t1059

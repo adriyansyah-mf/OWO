@@ -1,0 +1,23 @@
+title: SUID Bit Set on Binary
+id: proc-lnx-suid-manipulation
+status: experimental
+description: Detects chmod setting SUID bit on a file, a common privilege escalation persistence technique
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection_chmod_suid:
+    Image|endswith: '/chmod'
+    CommandLine|contains:
+      - ' +s '
+      - ' 4755'
+      - ' 4777'
+      - ' 6755'
+      - ' u+s'
+  condition: selection_chmod_suid
+level: high
+tags:
+  - attack.privilege_escalation
+  - attack.t1548
