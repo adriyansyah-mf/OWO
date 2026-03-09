@@ -172,7 +172,21 @@ logging:
 
 ---
 
-## Run Agent
+## Agent Installation
+
+For full installation instructions (one-liner installer, package install, config reference, service management, troubleshooting) see:
+
+**[docs/AGENT-INSTALL.md](docs/AGENT-INSTALL.md)**
+
+### Quick start (one-liner)
+
+```bash
+curl -fsSL https://github.com/adriyansyah-mf/OWO/releases/latest/download/install.sh | sudo NATS_URL=nats://192.168.1.3:4222 sh
+```
+
+> Replace `192.168.1.3` with the IP of your backend server.
+
+### Run from source
 
 ```bash
 # Run with default config
@@ -180,19 +194,6 @@ sudo ./bin/edr-client
 
 # Run with custom config
 sudo ./bin/edr-client -config config.production.yaml
-
-# Dump process tree (send signal)
-sudo kill -SIGUSR1 <pid>
-```
-
-The agent writes events as JSONL to `/var/log/edr/events.jsonl` and/or publishes to NATS.
-
-### systemd
-
-```bash
-cp contrib/owo.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now owo
 ```
 
 ---
