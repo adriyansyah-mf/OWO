@@ -86,7 +86,7 @@ export default function AlertsPage() {
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           host_id: hostID,
-          paths: ['/tmp', '/var/log/auth.log', '/var/log/syslog', '/etc/passwd', '/etc/hosts', '/proc/net/tcp'],
+          paths: ['/tmp', '/var/log/auth.log', '/var/log/secure', '/var/log/syslog', '/var/log/messages', '/etc/passwd', '/etc/hosts', '/etc/crontab'],
           artifact_name: artifactName,
         }),
       });

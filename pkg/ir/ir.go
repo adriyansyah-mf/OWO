@@ -226,15 +226,30 @@ func (l *Listener) collectTriage(params map[string]interface{}) {
 		artifact = "triage"
 	}
 	outPath := "/tmp/" + artifact + ".tar.gz"
-	args := []string{"-czf", outPath}
+	// Only include paths that exist; skip virtual/proc files that confuse tar
+	args := []string{"--ignore-failed-read", "-czf", outPath}
+	included := 0
 	for _, p := range paths {
-		if s, ok := p.(string); ok && s != "" {
+		s, ok := p.(string)
+		if !ok || s == "" {
+			continue
+		}
+		if _, err := os.Stat(s); err == nil {
 			args = append(args, s)
+			included++
 		}
 	}
-	if err := exec.Command("tar", args...).Run(); err != nil {
-		log.Printf("ir collect: %v", err)
+	if included == 0 {
+		log.Printf("ir collect: no valid paths to archive")
 		return
+	}
+	cmd := exec.Command("tar", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// exit 1 = warnings (some files changed/skipped) — still usable
+		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+			log.Printf("ir collect: %v (output: %s)", err, string(out))
+			return
+		}
 	}
 	log.Printf("ir: triage saved to %s", outPath)
 
