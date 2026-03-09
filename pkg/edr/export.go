@@ -106,6 +106,12 @@ func (e *Exporter) WriteEvent(eventJSON []byte, logToStderr bool) error {
 	return nil
 }
 
+// HasNatsPipeline reports whether events are forwarded to a NATS pipeline (ingest→detection).
+// When true, the agent should skip its built-in sigma eval to avoid duplicate alerts.
+func (e *Exporter) HasNatsPipeline() bool {
+	return e != nil && e.nats != nil
+}
+
 // Close flushes and closes the export file.
 func (e *Exporter) Close() error {
 	e.mu.Lock()

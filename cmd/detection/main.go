@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -85,7 +86,7 @@ func main() {
 			var rawMap map[string]interface{}
 			_ = json.Unmarshal(raw, &rawMap)
 			alert := events.Alert{
-				ID:        "alt-" + time.Now().Format("20060102150405"),
+				ID:        fmt.Sprintf("alt-%d-%d", norm.Process.Pid, time.Now().UnixNano()),
 				TenantID:  norm.TenantID,
 				HostID:    norm.HostID,
 				RuleID:    r.ID,

@@ -798,7 +798,9 @@ func main() {
 				sigmaEngMu.RLock()
 				earlyEng := sigmaEng
 				sigmaEngMu.RUnlock()
-				if earlyEng != nil && natsConn != nil {
+				// Skip built-in eval when NATS pipeline is active: ingest→detection handles it.
+				// Running both would produce duplicate alerts for every match.
+				if earlyEng != nil && natsConn != nil && !exporter.HasNatsPipeline() {
 					ebpfCmdline := strings.TrimRight(string(ev.Cmdline[:]), "\x00")
 					if ebpfCmdline == "" {
 						ebpfCmdline = procCmdline
