@@ -796,11 +796,20 @@ func main() {
 				earlyEng := sigmaEng
 				sigmaEngMu.RUnlock()
 				if earlyEng != nil && natsConn != nil {
+					// Prefer eBPF-captured argv (zero race, always present on new agent).
+					// Fall back to proc.Cmdline immediately — called here before SHA256/enrichment
+					// so the process is more likely still alive than in the old late-eval path.
 					ebpfCmdline := strings.TrimRight(string(ev.Cmdline[:]), "\x00")
+					if ebpfCmdline == "" {
+						ebpfCmdline = proc.Cmdline(ev.Pid)
+					}
 					if ebpfCmdline == "" {
 						ebpfCmdline = comm
 					}
 					ebpfExe := path
+					if ebpfExe == "" || ebpfExe == "-" {
+						ebpfExe = proc.Exe(ev.Pid)
+					}
 					if ebpfExe == "" || ebpfExe == "-" {
 						ebpfExe = comm
 					}
