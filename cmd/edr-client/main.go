@@ -67,7 +67,7 @@ var (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "0.1.12"
+var version = "0.1.13"
 
 type procNode struct {
 	Pid     uint32
