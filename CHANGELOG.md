@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.11] - 2026-03-09
+
+### Fixed
+
+- **Frontend caching** — API now sets `Cache-Control: no-store` on all endpoints via CORS middleware; alerts no longer require incognito to appear
+- **Sigma rule sync to agent** — DELETE and POST rule operations now publish `rules.default` NATS message so agents actually remove/write rules; previously only `detection.reload` was sent (server-side only)
+
+### Added
+
+- **Live Activity page** — real-time eBPF event stream from all agents (execve, network, file, privilege, module); filterable by event type with pause/resume and auto-scroll
+- **ClamAV auto-install on startup** — agent now installs ClamAV in the background at startup so it is ready before the first AV scan request; previously only installed on first scan trigger
+- **Agent installation docs** — new `docs/AGENT-INSTALL.md` covering one-liner install, env vars, config reference, service management, and troubleshooting
+
 ## [0.1.0] - 2026-02-15
 
 ### Added
