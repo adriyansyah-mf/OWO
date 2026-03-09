@@ -84,7 +84,7 @@ export default function AlertsPage() {
     }
   };
 
-  const collectArtifacts = async (hostID: string) => {
+  const collectArtifacts = async (hostID: string, pids?: number[]) => {
     const artifactName = `triage_${Date.now()}`;
     const key = `${hostID}:${artifactName}`;
     setCollecting(prev => ({ ...prev, [key]: true }));
@@ -96,6 +96,7 @@ export default function AlertsPage() {
           host_id: hostID,
           paths: ['/tmp', '/var/log/auth.log', '/var/log/secure', '/var/log/syslog', '/var/log/messages', '/etc/passwd', '/etc/hosts', '/etc/crontab'],
           artifact_name: artifactName,
+          ...(pids && pids.length > 0 ? { pids } : {}),
         }),
       });
       let attempts = 0;
@@ -239,7 +240,10 @@ export default function AlertsPage() {
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Collecting…</span>
                       ) : (
                         <button type="button" className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }}
-                          onClick={() => collectArtifacts(a.host_id)}>
+                          onClick={() => {
+                            const alertPid = a.event_json?.process?.pid;
+                            collectArtifacts(a.host_id, alertPid ? [alertPid] : undefined);
+                          }}>
                           Collect
                         </button>
                       )}

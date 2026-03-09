@@ -4,10 +4,14 @@ package ir
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -213,6 +217,85 @@ func (l *Listener) killProcess(params map[string]interface{}) {
 	log.Printf("ir: killed pid %d", pid)
 }
 
+// dumpProcessMemory writes forensic memory artifacts for pid into outDir.
+// It tries gcore first (full ELF core); falls back to dumping readable anonymous
+// segments from /proc/<pid>/mem (heap, stack, mmap'd regions).
+func dumpProcessMemory(pid int, outDir string) {
+	pidStr := strconv.Itoa(pid)
+
+	// Always collect lightweight /proc pseudo-files — no extra tools needed.
+	procFiles := []string{"maps", "smaps", "status", "environ", "cmdline", "comm", "stat", "limits"}
+	for _, pf := range procFiles {
+		src := fmt.Sprintf("/proc/%s/%s", pidStr, pf)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		dst := filepath.Join(outDir, fmt.Sprintf("proc_%s_%s.txt", pidStr, pf))
+		_ = os.WriteFile(dst, data, 0644)
+	}
+
+	// Try gcore (from gdb package) for a proper ELF core dump.
+	corePath := filepath.Join(outDir, fmt.Sprintf("core_%s", pidStr))
+	gcoreCmd := exec.Command("gcore", "-o", corePath, pidStr)
+	if err := gcoreCmd.Run(); err == nil {
+		log.Printf("ir memdump: gcore pid=%d -> %s", pid, corePath)
+		return
+	}
+
+	// Fallback: read readable anonymous segments from /proc/<pid>/mem.
+	mapsData, err := os.ReadFile(fmt.Sprintf("/proc/%s/maps", pidStr))
+	if err != nil {
+		log.Printf("ir memdump: pid=%d maps: %v", pid, err)
+		return
+	}
+	memFile, err := os.Open(fmt.Sprintf("/proc/%s/mem", pidStr))
+	if err != nil {
+		log.Printf("ir memdump: pid=%d mem: %v", pid, err)
+		return
+	}
+	defer memFile.Close()
+
+	dumpPath := filepath.Join(outDir, fmt.Sprintf("mem_%s.dump", pidStr))
+	dumpFile, err := os.Create(dumpPath)
+	if err != nil {
+		return
+	}
+	defer dumpFile.Close()
+
+	total := int64(0)
+	const maxDump = 256 * 1024 * 1024 // 256 MB cap per process
+	for _, line := range strings.Split(string(mapsData), "\n") {
+		if total >= maxDump {
+			break
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		perms := fields[1]
+		if !strings.Contains(perms, "r") {
+			continue // skip non-readable segments
+		}
+		var start, end uint64
+		if _, err := fmt.Sscanf(fields[0], "%x-%x", &start, &end); err != nil {
+			continue
+		}
+		size := int64(end - start)
+		if size <= 0 || size > 128*1024*1024 {
+			continue // skip unreasonably large segments
+		}
+		buf := make([]byte, size)
+		n, _ := memFile.ReadAt(buf, int64(start))
+		if n > 0 {
+			fmt.Fprintf(dumpFile, "# segment %x-%x perms=%s\n", start, end, perms)
+			_, _ = io.Copy(dumpFile, strings.NewReader(string(buf[:n])))
+			total += int64(n)
+		}
+	}
+	log.Printf("ir memdump: pid=%d fallback dump %d bytes -> %s", pid, total, dumpPath)
+}
+
 func (l *Listener) collectTriage(params map[string]interface{}) {
 	paths, _ := params["paths"].([]interface{})
 	if len(paths) == 0 {
@@ -225,10 +308,40 @@ func (l *Listener) collectTriage(params map[string]interface{}) {
 	if artifact == "" {
 		artifact = "triage"
 	}
+
+	// Memory dump: if caller passes pids, dump each process's memory first.
+	memDir := "/tmp/" + artifact + "_memdump"
+	var memDumped bool
+	if rawPids, ok := params["pids"]; ok {
+		pids, _ := rawPids.([]interface{})
+		if len(pids) > 0 {
+			_ = os.MkdirAll(memDir, 0755)
+			for _, p := range pids {
+				var pid int
+				switch v := p.(type) {
+				case float64:
+					pid = int(v)
+				case int:
+					pid = v
+				case string:
+					pid, _ = strconv.Atoi(v)
+				}
+				if pid > 0 {
+					dumpProcessMemory(pid, memDir)
+					memDumped = true
+				}
+			}
+		}
+	}
+
 	outPath := "/tmp/" + artifact + ".tar.gz"
 	// Only include paths that exist; skip virtual/proc files that confuse tar
 	args := []string{"--ignore-failed-read", "-czf", outPath}
 	included := 0
+	if memDumped {
+		args = append(args, memDir)
+		included++
+	}
 	for _, p := range paths {
 		s, ok := p.(string)
 		if !ok || s == "" {
@@ -250,6 +363,10 @@ func (l *Listener) collectTriage(params map[string]interface{}) {
 			log.Printf("ir collect: %v (output: %s)", err, string(out))
 			return
 		}
+	}
+	// Cleanup temp memdump dir after archiving
+	if memDumped {
+		_ = os.RemoveAll(memDir)
 	}
 	log.Printf("ir: triage saved to %s", outPath)
 
