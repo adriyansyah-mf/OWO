@@ -59,10 +59,13 @@ func (s *PostgresStore) InsertAlert(ctx context.Context, tenantID, hostID, ruleI
 		return nil
 	}
 	ev, _ := json.Marshal(eventJSON)
+	// rule_id column is UUID FK to rules table; sigma rule IDs are not UUIDs,
+	// so always store NULL to avoid cast errors. Rule context is in title/message/event_json.
+	_ = ruleID
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO alerts (tenant_id, host_id, rule_id, severity, title, message, event_json, mitre)
-		VALUES ($1, $2, NULLIF($3,'')::uuid, $4, $5, $6, $7, $8)
-	`, tenantID, hostID, ruleID, severity, title, message, ev, pq.Array(mitre))
+		INSERT INTO alerts (tenant_id, host_id, severity, title, message, event_json, mitre)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, tenantID, hostID, severity, title, message, ev, pq.Array(mitre))
 	return err
 }
 
