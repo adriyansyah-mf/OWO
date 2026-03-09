@@ -18,7 +18,7 @@ description: |
   privilege changes, and kernel module loads. Sends events to the
   OWO EDR backend via NATS.
 vendor: OWO
-homepage: https://github.com/your-org/owo-edr
+homepage: https://github.com/adriyansyah-mf/owo-edr
 license: proprietary
 
 depends:

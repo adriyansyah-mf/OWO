@@ -1,0 +1,17 @@
+title: Credential File Access (shadow) - File Event
+id: file-lnx-shadow-access
+status: experimental
+description: Detects opening /etc/shadow via file access (openat). No race with short-lived processes.
+author: EDR-Linux
+date: 2026/03/09
+logsource:
+  category: file_access
+  product: linux
+detection:
+  selection:
+    TargetFilename|contains: '/etc/shadow'
+  condition: selection
+level: high
+tags:
+  - attack.credential_access
+  - attack.t1003
