@@ -63,7 +63,12 @@ func normalize(env *events.AgentEnvelope) *events.NormalizedEvent {
 	if ts.IsZero() {
 		ts = time.Now()
 	}
-	name := filepath.Base(ev.Exe)
+	// Prefer ev.Path (eBPF filename, always set at execve) over ev.Exe (/proc, may be empty).
+	exe := ev.Exe
+	if exe == "" || exe == "-" {
+		exe = ev.Path
+	}
+	name := filepath.Base(exe)
 	if name == "" {
 		name = ev.Comm
 	}
@@ -76,7 +81,7 @@ func normalize(env *events.AgentEnvelope) *events.NormalizedEvent {
 		Process: events.ProcessInfo{
 			Pid:         ev.Pid,
 			Ppid:       ev.Ppid,
-			Executable:  ev.Exe,
+			Executable:  exe,
 			CommandLine: ev.Cmdline,
 			Name:        name,
 			Start:       ts,

@@ -933,7 +933,8 @@ func main() {
 				evMap := map[string]interface{}{
 					"event_type": "execve", "timestamp": ts, "pid": ev.Pid, "ppid": ppid, "tid": ev.Tid,
 					"uid": ev.Uid, "gid": ev.Gid, "comm": comm, "path": path,
-					"exe": exe, "cmdline": cmdline,
+					// Prefer eBPF path (always present at syscall time) over /proc exe which may be empty.
+					"exe": func() string { if exe == "" || exe == "-" { return path }; return exe }(), "cmdline": cmdline,
 					"parent_path": parentPath, "parent_cmdline": parentCmdline,
 					"sha256": enrichCtx.SHA256, "inode": enrichCtx.Inode,
 					"is_tty": enrichCtx.IsTTY, "container_id": enrichCtx.ContainerID,
