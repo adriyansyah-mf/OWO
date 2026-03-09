@@ -67,7 +67,7 @@ var (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "0.1.15"
+var version = "0.1.17"
 
 type procNode struct {
 	Pid     uint32
@@ -783,32 +783,32 @@ func main() {
 				return
 			}
 
+			// Read /proc immediately so we get cmdline/exe before short-lived process exits
+			// (e.g. cat /etc/shadow). eBPF cmdline is best when available; this is the fallback.
+			procCmdline := proc.Cmdline(ev.Pid)
+			procExe := proc.Exe(ev.Pid)
+
 			ts := time.Now().UTC()
 			comm := strings.TrimRight(string(ev.Comm[:]), "\x00")
 			path := sanitizePath(string(ev.Filename[:]))
 
 			// ── Early sigma evaluation (race-free) ───────────────────────────
-			// Run sigma BEFORE any /proc reads or SHA256 so detection fires even
-			// when the process exits in <1ms (nc TIMEOUT / ECONNREFUSED).
-			// Uses only data captured by eBPF at syscall time.
+			// Prefer eBPF-captured argv (zero race). Fall back to /proc read done above.
 			{
 				sigmaEngMu.RLock()
 				earlyEng := sigmaEng
 				sigmaEngMu.RUnlock()
 				if earlyEng != nil && natsConn != nil {
-					// Prefer eBPF-captured argv (zero race, always present on new agent).
-					// Fall back to proc.Cmdline immediately — called here before SHA256/enrichment
-					// so the process is more likely still alive than in the old late-eval path.
 					ebpfCmdline := strings.TrimRight(string(ev.Cmdline[:]), "\x00")
 					if ebpfCmdline == "" {
-						ebpfCmdline = proc.Cmdline(ev.Pid)
+						ebpfCmdline = procCmdline
 					}
 					if ebpfCmdline == "" {
 						ebpfCmdline = comm
 					}
 					ebpfExe := path
 					if ebpfExe == "" || ebpfExe == "-" {
-						ebpfExe = proc.Exe(ev.Pid)
+						ebpfExe = procExe
 					}
 					if ebpfExe == "" || ebpfExe == "-" {
 						ebpfExe = comm
@@ -859,15 +859,14 @@ func main() {
 			if ppid == 0 {
 				ppid = proc.PpidFromStat(ev.Pid)
 			}
-			cmdline := proc.Cmdline(ev.Pid)
+			cmdline := procCmdline
 			if cmdline == "" {
-				// Fallback: use argv captured by eBPF at execve time
 				cmdline = strings.TrimRight(string(ev.Cmdline[:]), "\x00")
 			}
 			if cmdline == "" {
 				cmdline = comm
 			}
-			exe := proc.Exe(ev.Pid)
+			exe := procExe
 			if exe == "" {
 				exe = "-"
 			}
