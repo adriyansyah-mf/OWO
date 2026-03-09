@@ -13,6 +13,17 @@ import (
 	"time"
 )
 
+// exitCode returns the process exit code from a cmd.Run() error, or 0 if nil.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	return -1
+}
+
 // ScanResult is one infected file or scan summary.
 type ScanResult struct {
 	Path     string `json:"path"`
@@ -113,23 +124,22 @@ func RunScan(paths []string) ([]ScanResult, error) {
 	err := cmd.Run()
 	out := stdout.String() + stderr.String()
 
-	// Exit 2 = database missing/corrupt, coba freshclam lalu retry
-	if err != nil {
-		serr := stderr.String()
-		if strings.Contains(serr, "Can't open") || strings.Contains(serr, "database") || strings.Contains(serr, "ERROR") {
-			if fc, lookErr := exec.LookPath("freshclam"); lookErr == nil {
-				log.Println("clamav: database belum siap, menjalankan freshclam...")
-				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-				exec.CommandContext(ctx, fc).Run()
-				cancel()
-				cmd = exec.Command("clamscan", args...)
-				stdout.Reset()
-				stderr.Reset()
-				cmd.Stdout = &stdout
-				cmd.Stderr = &stderr
-				err = cmd.Run()
-				out = stdout.String() + stderr.String()
-			}
+	// Exit code 2 = database missing/corrupt — run freshclam and retry.
+	// Exit code 1 = infected files found (normal result, do not retry).
+	// Exit code 0 = clean.
+	if exitCode(err) == 2 {
+		if fc, lookErr := exec.LookPath("freshclam"); lookErr == nil {
+			log.Println("clamav: database not ready, running freshclam...")
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			exec.CommandContext(ctx, fc).Run() //nolint:errcheck
+			cancel()
+			cmd = exec.Command("clamscan", args...)
+			stdout.Reset()
+			stderr.Reset()
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err = cmd.Run()
+			out = stdout.String() + stderr.String()
 		}
 	}
 
