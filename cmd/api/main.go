@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -115,6 +116,10 @@ var (
 	reportGen         *report.Generator
 	storePg    *store.PostgresStore
 	nc         *nats.Conn
+	// artifact store: key = "host_id:artifact_name"
+	artifactStore map[string][]byte
+	artifactMeta  []map[string]interface{}
+	artifactMu    sync.RWMutex
 )
 
 func main() {
@@ -411,6 +416,61 @@ func main() {
 			liveEventsMu.Unlock()
 			broadcastLiveEvent(env)
 		})
+
+		// Artifact deliveries from agents (collect_triage results)
+		nc.Subscribe("ir.artifacts.*.*", func(m *nats.Msg) { //nolint:errcheck
+			var msg map[string]interface{}
+			if json.Unmarshal(m.Data, &msg) != nil {
+				return
+			}
+			hostID, _ := msg["host_id"].(string)
+			artifactName, _ := msg["artifact_name"].(string)
+			contentB64, _ := msg["content_b64"].(string)
+			if hostID == "" || artifactName == "" || contentB64 == "" {
+				return
+			}
+			data, err := base64.StdEncoding.DecodeString(contentB64)
+			if err != nil {
+				log.Printf("artifact: decode error from %s: %v", hostID, err)
+				return
+			}
+			ts, _ := msg["timestamp"].(string)
+			if ts == "" {
+				ts = time.Now().UTC().Format(time.RFC3339)
+			}
+			key := hostID + ":" + artifactName
+			artifactMu.Lock()
+			if artifactStore == nil {
+				artifactStore = make(map[string][]byte)
+			}
+			artifactStore[key] = data
+			found := false
+			for i, entry := range artifactMeta {
+				if entry["host_id"] == hostID && entry["artifact_name"] == artifactName {
+					artifactMeta[i]["timestamp"] = ts
+					artifactMeta[i]["size"] = len(data)
+					found = true
+					break
+				}
+			}
+			if !found {
+				artifactMeta = append(artifactMeta, map[string]interface{}{
+					"host_id":       hostID,
+					"artifact_name": artifactName,
+					"size":          len(data),
+					"timestamp":     ts,
+				})
+				// Cap at 50 artifacts; evict oldest
+				if len(artifactMeta) > 50 {
+					oldest := artifactMeta[0]
+					oldKey := oldest["host_id"].(string) + ":" + oldest["artifact_name"].(string)
+					delete(artifactStore, oldKey)
+					artifactMeta = artifactMeta[1:]
+				}
+			}
+			artifactMu.Unlock()
+			log.Printf("artifact: stored %s from %s (%d bytes)", artifactName, hostID, len(data))
+		})
 	}
 
 	mux := http.NewServeMux()
@@ -431,6 +491,8 @@ func main() {
 	mux.HandleFunc("/api/v1/ir/release", cors(requirePerm(rbac.PermWriteIR, handleIRRelease)))
 	mux.HandleFunc("/api/v1/ir/kill", cors(requirePerm(rbac.PermWriteIR, handleIRKill)))
 	mux.HandleFunc("/api/v1/ir/collect", cors(requirePerm(rbac.PermWriteIR, handleIRCollect)))
+	mux.HandleFunc("/api/v1/ir/artifacts", cors(requirePerm(rbac.PermReadScans, handleIRArtifactList)))
+	mux.HandleFunc("/api/v1/ir/artifact", cors(requirePerm(rbac.PermReadScans, handleIRArtifactDownload)))
 	mux.HandleFunc("/api/v1/ir/scan", cors(requirePerm(rbac.PermWriteIR, handleIRScan)))
 	mux.HandleFunc("/api/v1/ir/deep-scan", cors(requirePerm(rbac.PermWriteIR, handleIRDeepScan)))
 	mux.HandleFunc("/api/v1/ir/av-scan", cors(requirePerm(rbac.PermWriteIR, handleIRAVScan)))
@@ -1298,6 +1360,50 @@ func handleAVScanResults(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+func handleIRArtifactList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	hostID := r.URL.Query().Get("host_id")
+	artifactMu.RLock()
+	out := make([]map[string]interface{}, 0, len(artifactMeta))
+	for _, entry := range artifactMeta {
+		if hostID == "" || entry["host_id"] == hostID {
+			out = append(out, entry)
+		}
+	}
+	artifactMu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func handleIRArtifactDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	hostID := r.URL.Query().Get("host_id")
+	name := r.URL.Query().Get("name")
+	if hostID == "" || name == "" {
+		http.Error(w, "host_id and name required", 400)
+		return
+	}
+	key := hostID + ":" + name
+	artifactMu.RLock()
+	data, ok := artifactStore[key]
+	artifactMu.RUnlock()
+	if !ok {
+		http.Error(w, "artifact not found", 404)
+		return
+	}
+	filename := name + "_" + hostID + ".tar.gz"
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data) //nolint:errcheck
 }
 
 func handleIRCollect(w http.ResponseWriter, r *http.Request) {

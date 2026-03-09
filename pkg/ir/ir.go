@@ -2,12 +2,15 @@
 package ir
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -233,5 +236,31 @@ func (l *Listener) collectTriage(params map[string]interface{}) {
 		log.Printf("ir collect: %v", err)
 		return
 	}
-	log.Printf("ir: triage saved to %s (scp from host to retrieve)", outPath)
+	log.Printf("ir: triage saved to %s", outPath)
+
+	// Deliver artifact via NATS (cap at 8 MB to stay within NATS limits)
+	const maxBytes = 8 * 1024 * 1024
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		log.Printf("ir: read artifact: %v", err)
+		return
+	}
+	if len(data) > maxBytes {
+		log.Printf("ir: artifact too large (%d bytes), skipping NATS delivery — use scp to retrieve", len(data))
+		return
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"artifact_name": artifact,
+		"host_id":       l.hostID,
+		"tenant_id":     l.tenantID,
+		"size":          len(data),
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"content_b64":   base64.StdEncoding.EncodeToString(data),
+	})
+	subj := "ir.artifacts." + l.tenantID + "." + l.hostID
+	if err := l.nc.Publish(subj, payload); err != nil {
+		log.Printf("ir: publish artifact: %v", err)
+		return
+	}
+	log.Printf("ir: artifact published to %s (%d bytes)", subj, len(data))
 }

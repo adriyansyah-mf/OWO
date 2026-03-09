@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.16] - 2026-03-09
+
+### Added
+
+- **Artifact collection from alerts** — SOC analysts can click "Collect" on any alert to trigger forensic artifact collection from the alerted host; the agent tars key paths (`/tmp`, auth.log, syslog, `/etc/passwd`, `/etc/hosts`, `/proc/net/tcp`) and delivers the archive via NATS; a "Download Artifacts" button appears when the archive is ready for download directly in the browser
+- **IR artifact endpoints** — new `GET /api/v1/ir/artifacts` (list) and `GET /api/v1/ir/artifact` (download) API endpoints; archives are stored in API memory (cap 50) and served as `.tar.gz` with token auth via query param for browser-native download
+
 ## [0.1.15] - 2026-03-09
 
 ### Fixed
